@@ -91,3 +91,42 @@ export {
   EncryptionError,
   DecompilerError,
 } from "./errors.ts";
+
+// ── DXC Compiler ───────────────────────────────────────────────
+export {
+  DxcCompiler,
+  getDxcCompiler,
+  disposeDxcCompiler,
+  compileHLSL,
+  DxcError,
+  DxcLoadError,
+  DxcCompilationError,
+  DxcOutKind,
+  type DxcCompileOptions,
+  type DxcCompileResult,
+} from "./dxc/mod.ts";
+
+// ── BetterRTX Shader Embedding ─────────────────────────────────
+export {
+  loadShaderSource,
+  loadManifestSources,
+  BETTERRTX_MANIFESTS,
+  extractRegisterDefines,
+  registerDefinesToArgs,
+  mergeRegisterDefines,
+  type ShaderEntry,
+  type MaterialManifest,
+} from "./betterrtx/mod.ts";
+
+// ── Shader Compiler Pipeline ───────────────────────────────────
+export {
+  compileMaterial,
+  buildMaterial,
+  wrapDxilAsBgfxShader,
+  type CompileMaterialOptions,
+  type CompileMaterialResult,
+  type MaterialDefinition,
+  type CompiledShader,
+  type PassDefinition,
+  type WrapDxilOptions,
+} from "./compiler/mod.ts";
