@@ -6,7 +6,7 @@
  */
 
 import { ShaderStage } from "../material/enums.ts";
-import type { ShaderEntry, MaterialManifest } from "./shader-manifest.ts";
+import type { ShaderEntry, MaterialManifest } from "./manifest-types.ts";
 
 // ── Config JSON schema ────────────────────────────────────────────
 

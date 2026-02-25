@@ -180,7 +180,7 @@ const rtxStubTests = [
 ] as const;
 
 for (let i = 0; i < rtxStubTests.length; i++) {
-  const t = rtxStubTests[i];
+  const t = rtxStubTests[i]!;
   console.log(`\n=== Test ${7 + i}: RTXStub ${t.name} (compute) ===`);
   try {
     const source = await Bun.file(`${SHADERS_DIR}/RTXStub/shaders/${t.file}`).bytes();

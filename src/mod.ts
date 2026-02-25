@@ -110,7 +110,7 @@ export {
 export {
   loadShaderSource,
   loadManifestSources,
-  BETTERRTX_MANIFESTS,
+  loadManifests,
   extractRegisterDefines,
   registerDefinesToArgs,
   mergeRegisterDefines,
