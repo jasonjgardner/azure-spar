@@ -63,7 +63,6 @@ async function promptMaterialsDir(): Promise<string> {
 
   console.log("\nMinecraft renderer materials directory needed.");
   console.log("This contains .material.bin files used as base for BetterRTX.");
-  console.log('Example: M:\\Games\\Minecraft for Windows\\Content\\data\\renderer\\materials\n');
 
   const response = prompt("Enter materials directory path:");
   if (!response?.trim()) {
