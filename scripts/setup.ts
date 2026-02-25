@@ -2,7 +2,7 @@
 /**
  * BetterRTX shader setup script.
  *
- * 1. Extracts HLSL source files from brtx_lazurite-main.tar.gz
+ * 1. Extracts HLSL source files from a provided archive (default: shader_source.tar.gz)
  * 2. Backs up base .material.bin files from Minecraft's renderer directory
  * 3. Extracts register binding defines (s_<name>_REG) from base materials
  * 4. Generates shaders/manifest.json
@@ -29,13 +29,13 @@ import type { MaterialManifest } from "../src/betterrtx/manifest-types.ts";
 // ── Constants ────────────────────────────────────────────────────
 
 const PROJECT_ROOT = resolve(import.meta.dir, "..");
-const DEFAULT_ARCHIVE = resolve(PROJECT_ROOT, "brtx_lazurite-main.tar.gz");
+const DEFAULT_ARCHIVE = resolve(PROJECT_ROOT, "shader_source.tar.gz");
 const SHADERS_DIR = resolve(PROJECT_ROOT, "shaders");
 const BACKUP_DIR = resolve(PROJECT_ROOT, "materials-backup");
 const REGISTER_BINDINGS_PATH = resolve(SHADERS_DIR, "register-bindings.json");
 const MANIFEST_JSON_PATH = resolve(SHADERS_DIR, "manifest.json");
 
-const ARCHIVE_PREFIX = "brtx_lazurite-main/";
+const ARCHIVE_PREFIX = "shader_source/";
 
 // Material names that BetterRTX modifies
 const TARGET_MATERIALS = [
