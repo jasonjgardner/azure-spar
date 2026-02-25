@@ -1,8 +1,26 @@
 {
-  "name": "lazurite",
+  "name": "azure-spar",
+  "version": "1.0.0",
+  "description": "Lazurite in Typescript",
   "module": "src/mod.ts",
+  "main": "src/mod.ts",
   "type": "module",
-  "private": true,
+  "exports": {
+    ".": "./src/mod.ts",
+    "./compiler": "./src/compiler/mod.ts",
+    "./betterrtx": "./src/betterrtx/mod.ts",
+    "./material": "./src/material/mod.ts",
+    "./dxc": "./src/dxc/mod.ts"
+  },
+  "files": [
+    "src/",
+    "shaders/"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jasonjgardner/azure-spar.git"
+  },
+  "license": "LGPL-3.0-1",
   "devDependencies": {
     "@types/bun": "^1.3.9"
   },
