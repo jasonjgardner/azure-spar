@@ -93,6 +93,50 @@ export async function loadManifestSources(
 
 // ── Manifest Loading ───────────────────────────────────────────
 
+// ── Register Bindings Loading ─────────────────────────────────
+
+const REGISTER_BINDINGS_KEY = "register-bindings.json";
+
+let _registerBindings: Readonly<
+  Record<string, Readonly<Record<string, string>>>
+> | null = null;
+
+/**
+ * Load register binding defines for all materials.
+ *
+ * In compiled mode: reads from the embedded register-bindings.json.
+ * In dev mode: reads from shaders/register-bindings.json on disk.
+ */
+export async function loadRegisterBindings(): Promise<
+  Readonly<Record<string, Readonly<Record<string, string>>>>
+> {
+  if (_registerBindings) return _registerBindings;
+
+  const embedded = getShaderMap().get(REGISTER_BINDINGS_KEY);
+  if (embedded) {
+    _registerBindings = JSON.parse(await embedded.text()) as Record<
+      string,
+      Record<string, string>
+    >;
+    return _registerBindings;
+  }
+
+  const devPath = resolve(DEV_SHADERS_DIR, REGISTER_BINDINGS_KEY);
+  const file = Bun.file(devPath);
+  if (await file.exists()) {
+    _registerBindings = (await file.json()) as Record<
+      string,
+      Record<string, string>
+    >;
+    return _registerBindings;
+  }
+
+  _registerBindings = {};
+  return _registerBindings;
+}
+
+// ── Manifest Loading ───────────────────────────────────────────
+
 const MANIFEST_KEY = "manifest.json";
 
 let _manifests: readonly MaterialManifest[] | null = null;

@@ -111,6 +111,7 @@ export {
   loadShaderSource,
   loadManifestSources,
   loadManifests,
+  loadRegisterBindings,
   extractRegisterDefines,
   registerDefinesToArgs,
   mergeRegisterDefines,

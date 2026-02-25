@@ -11,7 +11,10 @@
 
 import { resolve } from "node:path";
 import { mkdir } from "node:fs/promises";
-import { loadManifests } from "./betterrtx/mod.ts";
+import {
+  loadManifests,
+  loadRegisterBindings,
+} from "./betterrtx/mod.ts";
 import { loadSettingsFile, settingsToDefines } from "./betterrtx/settings.ts";
 import { compileMaterial } from "./compiler/mod.ts";
 import { disposeDxcCompiler } from "./dxc/mod.ts";
@@ -23,7 +26,6 @@ import type { SettingsDefines } from "./betterrtx/settings.ts";
 const PROJECT_ROOT = resolve(import.meta.dir, "..");
 const SHADERS_DIR = resolve(PROJECT_ROOT, "shaders");
 const DEFAULT_OUTPUT = resolve(PROJECT_ROOT, "output");
-const REGISTER_BINDINGS_PATH = resolve(SHADERS_DIR, "register-bindings.json");
 
 // ── CLI ──────────────────────────────────────────────────────────
 
@@ -37,19 +39,6 @@ function getArg(flag: string): string | undefined {
 
 function includePathsForMaterial(materialName: string): readonly string[] {
   return [resolve(SHADERS_DIR, materialName, "shaders")];
-}
-
-async function loadRegisterBindings(): Promise<
-  Readonly<Record<string, Readonly<Record<string, string>>>>
-> {
-  const file = Bun.file(REGISTER_BINDINGS_PATH);
-  if (await file.exists()) {
-    return file.json();
-  }
-  console.warn(
-    "Warning: No register-bindings.json found. Run setup.ts first.\n",
-  );
-  return {};
 }
 
 async function loadUserSettings(): Promise<SettingsDefines> {

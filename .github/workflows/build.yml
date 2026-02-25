@@ -99,40 +99,40 @@ on:
         type: string
         default: "{}"
 
+env:
+  DXC_URL: "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2407/dxc_2024_07_31.zip"
+
 jobs:
   build:
     runs-on: windows-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Download BetterRTX compiler
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "$env:BRTX_BUILDER_URL" -OutFile brtxbuilder.exe
+          Invoke-WebRequest -Uri "$env:BRTX_BUILDER_URL.sha256" -OutFile brtxbuilder.exe.sha256
+        env:
+          BRTX_BUILDER_URL: ${{ secrets.BRTX_BUILDER_URL }}
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install dependencies
-        run: bun install
+      - name: Verify checksum
+        shell: pwsh
+        run: |
+          $expected = (Get-Content brtxbuilder.exe.sha256 -Raw).Split(" ")[0].Trim()
+          $actual = (Get-FileHash brtxbuilder.exe -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne $expected) {
+            Write-Error "Checksum mismatch! Expected: $expected, Got: $actual"
+            exit 1
+          }
+          Write-Host "Checksum verified: $actual"
 
       - name: Download DXC
         shell: pwsh
         run: |
-          $dxcUrl = "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2407/dxc_2024_07_31.zip"
-          Invoke-WebRequest -Uri $dxcUrl -OutFile dxc.zip
+          Invoke-WebRequest -Uri "$env:DXC_URL" -OutFile dxc.zip
           Expand-Archive -Path dxc.zip -DestinationPath dxc_extracted -Force
           Copy-Item dxc_extracted/bin/x64/dxcompiler.dll -Destination . -Force
           Copy-Item dxc_extracted/bin/x64/dxil.dll -Destination . -Force
           Remove-Item dxc.zip, dxc_extracted -Recurse -Force
-
-      - name: Download BetterRTX archive
-        shell: bash
-        run: |
-          # TODO: Replace with actual BetterRTX archive download URL
-          # curl -L -o brtx_lazurite-main.tar.gz "https://example.com/brtx_lazurite-main.tar.gz"
-          echo "::warning::BetterRTX archive URL not configured. Set the download URL in this workflow."
-
-      - name: Extract shaders
-        run: bun run scripts/setup.ts --skip-materials
 
       - name: Generate settings
         shell: bash
@@ -182,7 +182,7 @@ jobs:
           " '${{ inputs.settings_json }}'
 
       - name: Compile materials
-        run: bun run src/main.ts --settings user-settings.json --output ./output
+        run: ./brtxbuilder.exe --settings user-settings.json --output ./output
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
