@@ -17,6 +17,14 @@ export {
   registerDefinesToArgs,
   mergeRegisterDefines,
 } from "./register-bindings.ts";
+export {
+  parseMaterialConfig,
+  parseProjectConfig,
+  discoverMaterials,
+  buildManifestFromConfig,
+  type MaterialConfig,
+  type ProjectConfig,
+} from "./config.ts";
 
 // ── Shader Map (lazy-initialized) ──────────────────────────────
 

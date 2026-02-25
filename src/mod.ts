@@ -115,8 +115,14 @@ export {
   extractRegisterDefines,
   registerDefinesToArgs,
   mergeRegisterDefines,
+  parseMaterialConfig,
+  parseProjectConfig,
+  discoverMaterials,
+  buildManifestFromConfig,
   type ShaderEntry,
   type MaterialManifest,
+  type MaterialConfig,
+  type ProjectConfig,
 } from "./betterrtx/mod.ts";
 
 // ── BetterRTX User Settings ──────────────────────────────────
