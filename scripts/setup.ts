@@ -9,6 +9,7 @@
  *
  * Usage:
  *   bun run scripts/setup.ts [--archive path/to/archive.tar.gz] [--materials path/to/materials]
+ *   bun run scripts/setup.ts --skip-materials [--archive path/to/archive.tar.gz]
  */
 
 import { resolve, dirname, extname, join } from "node:path";
@@ -228,25 +229,38 @@ async function main(): Promise<void> {
   const archivePath = getArg("--archive")
     ? resolve(getArg("--archive")!)
     : DEFAULT_ARCHIVE;
+  const skipMaterials = Bun.argv.includes("--skip-materials");
 
-  // ── Step 1: Prompt for and validate materials directory ────────
   console.log("=== BetterRTX Shader Setup ===\n");
 
-  const materialsDir = await promptMaterialsDir();
-  await validateMaterialsDir(materialsDir);
-  console.log(`\nMaterials directory: ${materialsDir}`);
+  // ── Step 1–2: Backup materials and extract register bindings ───
+  let registerBindings: Readonly<Record<string, Readonly<Record<string, string>>>> = {};
 
-  // ── Step 2: Backup materials and extract register bindings ─────
-  console.log("\nBacking up base materials...");
-  const registerBindings = await backupAndExtractRegisters(materialsDir);
+  if (skipMaterials) {
+    console.log("Skipping materials backup (--skip-materials)");
+    // Use existing register-bindings.json if available
+    try {
+      registerBindings = await Bun.file(REGISTER_BINDINGS_PATH).json();
+      console.log(`Using existing register bindings: ${REGISTER_BINDINGS_PATH}`);
+    } catch {
+      console.log("No existing register-bindings.json found (register bindings will be empty)");
+    }
+  } else {
+    const materialsDir = await promptMaterialsDir();
+    await validateMaterialsDir(materialsDir);
+    console.log(`\nMaterials directory: ${materialsDir}`);
 
-  // Write register bindings for use during compilation
-  await mkdir(SHADERS_DIR, { recursive: true });
-  await Bun.write(
-    REGISTER_BINDINGS_PATH,
-    JSON.stringify(registerBindings, null, 2),
-  );
-  console.log(`\nRegister bindings saved: ${REGISTER_BINDINGS_PATH}`);
+    console.log("\nBacking up base materials...");
+    registerBindings = await backupAndExtractRegisters(materialsDir);
+
+    // Write register bindings for use during compilation
+    await mkdir(SHADERS_DIR, { recursive: true });
+    await Bun.write(
+      REGISTER_BINDINGS_PATH,
+      JSON.stringify(registerBindings, null, 2),
+    );
+    console.log(`\nRegister bindings saved: ${REGISTER_BINDINGS_PATH}`);
+  }
 
   // ── Step 3: Extract BetterRTX shaders from archive ─────────────
   console.log(`\nLoading archive: ${archivePath}`);
@@ -292,7 +306,9 @@ async function main(): Promise<void> {
       `  ${manifest.materialName}: ${manifest.shaders.length} passes, ${regCount} register bindings`,
     );
   }
-  console.log(`\nBackups saved to: ${BACKUP_DIR}`);
+  if (!skipMaterials) {
+    console.log(`\nBackups saved to: ${BACKUP_DIR}`);
+  }
   console.log("Run 'bun run scripts/test-dxc.ts' to verify DXC compilation.");
 }
 

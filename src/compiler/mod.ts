@@ -31,6 +31,8 @@ export interface CompileMaterialOptions {
   readonly registerDefines?: Readonly<Record<string, string>>;
   /** Include search directories for #include resolution. */
   readonly includePaths?: readonly string[];
+  /** User-provided shader setting overrides (lowest priority defines). */
+  readonly userDefines?: Readonly<Record<string, string>>;
 }
 
 /** Result of the full compilation pipeline. */
@@ -72,8 +74,9 @@ export async function compileMaterial(
       ...(shaderEntry.compilerOptions ?? []),
     ];
 
-    // Merge defines: register bindings (from base material) + shader-specific defines
+    // Merge defines: user settings (lowest) → register bindings → pass defines (highest)
     const defines = {
+      ...options?.userDefines,
       ...options?.registerDefines,
       ...shaderEntry.defines,
     };

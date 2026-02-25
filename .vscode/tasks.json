@@ -2,19 +2,46 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "bun build --compile",
+			"label": "build",
+			"detail": "Compile src/main.ts + embedded shaders into mod.exe",
 			"type": "shell",
-			"command": "bun build --compile ./src/main.ts ./shaders/**/*.{hlsl,hlsli,h} ./shaders/manifest.json",
-			"options": {
-				"shell": {
-					"executable": "bash",
-					"args": [
-						"-c"
-					]
-				}
+			"command": "bun build --compile ./src/main.ts ./shaders/**/*.hlsl ./shaders/**/*.hlsli ./shaders/**/*.h ./shaders/manifest.json ./shaders/register-bindings.json --outfile brtxbuilder.exe",
+			"group": {
+				"kind": "build",
+				"isDefault": true
 			},
-			"problemMatcher": [],
-			"group": "build"
+			"problemMatcher": []
+		},
+		{
+			"label": "compile",
+			"detail": "Run the material compiler (dev mode, no exe needed)",
+			"type": "shell",
+			"command": "bun run src/main.ts",
+			"group": "build",
+			"problemMatcher": []
+		},
+		{
+			"label": "setup",
+			"detail": "Extract shaders from archive and backup base materials",
+			"type": "shell",
+			"command": "bun run scripts/setup.ts",
+			"problemMatcher": []
+		},
+		{
+			"label": "test:dxc",
+			"detail": "Smoke test DXC compilation against real BetterRTX shaders",
+			"type": "shell",
+			"command": "bun run scripts/test-dxc.ts",
+			"group": "test",
+			"problemMatcher": []
+		},
+		{
+			"label": "typecheck",
+			"type": "shell",
+			"command": "bunx tsc --noEmit",
+			"problemMatcher": [
+				"$tsc"
+			]
 		}
 	]
 }

@@ -118,6 +118,18 @@ export {
   type MaterialManifest,
 } from "./betterrtx/mod.ts";
 
+// ── BetterRTX User Settings ──────────────────────────────────
+export {
+  parseSettingsJson,
+  settingsToDefines,
+  convertSettingValue,
+  loadSettingsFile,
+  SettingsError,
+  type RawSettings,
+  type SettingsDefines,
+  type SettingValue,
+} from "./betterrtx/settings.ts";
+
 // ── Shader Compiler Pipeline ───────────────────────────────────
 export {
   compileMaterial,

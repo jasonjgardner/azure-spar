@@ -1,0 +1,195 @@
+name: Build BetterRTX Materials
+
+on:
+  workflow_dispatch:
+    inputs:
+      # ── Rendering ──────────────────────────────────────────────
+      TONEMAPPING_TYPE:
+        description: "Tonemapping (0: Vanilla, 1: ACES, 2: Uncharted2, 3: Reinhard, 4: Uchimura, 5: AgX)"
+        required: false
+        type: choice
+        options: ["", "0", "1", "2", "3", "4", "5"]
+        default: ""
+      DIFFUSE_BRDF:
+        description: "Diffuse BRDF (0: Burley, 1: Frostbite, 2: Lambertian, 3: Oren Nayer)"
+        required: false
+        type: choice
+        options: ["", "0", "1", "2", "3"]
+        default: ""
+      MAX_EV:
+        description: "Maximum exposure value (default: 7.0)"
+        required: false
+        type: string
+        default: ""
+
+      # ── Effects ────────────────────────────────────────────────
+      ENABLE_DOF:
+        description: "Enable Depth of Field"
+        required: false
+        type: boolean
+        default: false
+      DOF_APERTURE_SIZE:
+        description: "DOF aperture size (default: 0.012)"
+        required: false
+        type: string
+        default: ""
+      ENABLE_MOTION_BLUR:
+        description: "Enable Motion Blur"
+        required: false
+        type: boolean
+        default: false
+      ENABLE_CHROMATIC_ABERRATION:
+        description: "Enable Chromatic Aberration"
+        required: false
+        type: boolean
+        default: false
+
+      # ── Atmosphere ─────────────────────────────────────────────
+      ENABLE_RAYLEIGH_SKY:
+        description: "Enable Rayleigh sky scattering"
+        required: false
+        type: boolean
+        default: true
+      ENABLE_RAIN_WETNESS:
+        description: "Enable rain wetness effects"
+        required: false
+        type: boolean
+        default: true
+      ENABLE_RAIN_PUDDLES:
+        description: "Enable rain puddles"
+        required: false
+        type: boolean
+        default: true
+
+      # ── Dimensions ─────────────────────────────────────────────
+      ENABLE_IMPROVED_NETHER_VISUALS:
+        description: "Enable improved Nether visuals"
+        required: false
+        type: boolean
+        default: true
+      ENABLE_CUSTOM_END_SKY:
+        description: "Enable custom End sky"
+        required: false
+        type: boolean
+        default: true
+
+      # ── Night Vision ───────────────────────────────────────────
+      ENABLE_IMPROVED_NIGHT_VISION:
+        description: "Enable improved night vision"
+        required: false
+        type: boolean
+        default: true
+
+      # ── Exposure Lock ──────────────────────────────────────────
+      LOCK_EXPOSURE:
+        description: "Lock exposure (for screenshots)"
+        required: false
+        type: boolean
+        default: false
+      LOCKED_EV:
+        description: "Locked exposure EV value (default: 6.0)"
+        required: false
+        type: string
+        default: ""
+
+      # ── Advanced ───────────────────────────────────────────────
+      settings_json:
+        description: 'Advanced: JSON overrides (form inputs take priority). Example: {"WATER_PARALLAX_AMPLITUDE": 0.2}'
+        required: false
+        type: string
+        default: "{}"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Download DXC
+        shell: pwsh
+        run: |
+          $dxcUrl = "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2407/dxc_2024_07_31.zip"
+          Invoke-WebRequest -Uri $dxcUrl -OutFile dxc.zip
+          Expand-Archive -Path dxc.zip -DestinationPath dxc_extracted -Force
+          Copy-Item dxc_extracted/bin/x64/dxcompiler.dll -Destination . -Force
+          Copy-Item dxc_extracted/bin/x64/dxil.dll -Destination . -Force
+          Remove-Item dxc.zip, dxc_extracted -Recurse -Force
+
+      - name: Download BetterRTX archive
+        shell: bash
+        run: |
+          # TODO: Replace with actual BetterRTX archive download URL
+          # curl -L -o brtx_lazurite-main.tar.gz "https://example.com/brtx_lazurite-main.tar.gz"
+          echo "::warning::BetterRTX archive URL not configured. Set the download URL in this workflow."
+
+      - name: Extract shaders
+        run: bun run scripts/setup.ts --skip-materials
+
+      - name: Generate settings
+        shell: bash
+        run: |
+          node -e "
+            const form = {};
+
+            // Choice/string inputs (only include if non-empty)
+            const stringInputs = {
+              TONEMAPPING_TYPE: '${{ inputs.TONEMAPPING_TYPE }}',
+              DIFFUSE_BRDF: '${{ inputs.DIFFUSE_BRDF }}',
+              MAX_EV: '${{ inputs.MAX_EV }}',
+              DOF_APERTURE_SIZE: '${{ inputs.DOF_APERTURE_SIZE }}',
+              LOCKED_EV: '${{ inputs.LOCKED_EV }}',
+            };
+
+            for (const [key, val] of Object.entries(stringInputs)) {
+              if (val === '' || val === 'undefined') continue;
+              const num = Number(val);
+              form[key] = isNaN(num) ? val : num;
+            }
+
+            // Boolean inputs (always included since they have explicit defaults)
+            form.ENABLE_DOF = ${{ inputs.ENABLE_DOF }};
+            form.ENABLE_MOTION_BLUR = ${{ inputs.ENABLE_MOTION_BLUR }};
+            form.ENABLE_CHROMATIC_ABERRATION = ${{ inputs.ENABLE_CHROMATIC_ABERRATION }};
+            form.ENABLE_RAYLEIGH_SKY = ${{ inputs.ENABLE_RAYLEIGH_SKY }};
+            form.ENABLE_RAIN_WETNESS = ${{ inputs.ENABLE_RAIN_WETNESS }};
+            form.ENABLE_RAIN_PUDDLES = ${{ inputs.ENABLE_RAIN_PUDDLES }};
+            form.ENABLE_IMPROVED_NETHER_VISUALS = ${{ inputs.ENABLE_IMPROVED_NETHER_VISUALS }};
+            form.ENABLE_CUSTOM_END_SKY = ${{ inputs.ENABLE_CUSTOM_END_SKY }};
+            form.ENABLE_IMPROVED_NIGHT_VISION = ${{ inputs.ENABLE_IMPROVED_NIGHT_VISION }};
+            form.LOCK_EXPOSURE = ${{ inputs.LOCK_EXPOSURE }};
+
+            // Parse advanced JSON overrides
+            let jsonOverrides = {};
+            try {
+              jsonOverrides = JSON.parse(process.argv[1] || '{}');
+            } catch (e) {
+              console.error('Warning: Invalid settings_json input:', e.message);
+            }
+
+            // Form inputs take priority over JSON overrides
+            const merged = { ...jsonOverrides, ...form };
+            require('fs').writeFileSync('user-settings.json', JSON.stringify(merged, null, 2));
+            console.log('Settings:', JSON.stringify(merged, null, 2));
+          " '${{ inputs.settings_json }}'
+
+      - name: Compile materials
+        run: bun run src/main.ts --settings user-settings.json --output ./output
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: betterrtx-materials
+          path: |
+            output/RTXStub.material.bin
+            output/RTXPostFX.Tonemapping.material.bin
+            output/RTXPostFX.Bloom.material.bin
+          retention-days: 30
