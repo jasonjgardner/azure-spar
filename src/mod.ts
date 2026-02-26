@@ -119,6 +119,8 @@ export {
   parseProjectConfig,
   discoverMaterials,
   buildManifestFromConfig,
+  DEFAULT_SETTINGS,
+  DEFAULT_SETTING_KEYS,
   type ShaderEntry,
   type MaterialManifest,
   type MaterialConfig,
@@ -149,3 +151,28 @@ export {
   type PassDefinition,
   type WrapDxilOptions,
 } from "./compiler/mod.ts";
+
+// ── Build Server ───────────────────────────────────────────────
+export {
+  createServer,
+  disposeServer,
+  createBuildCache,
+  createDatabase,
+  createQueueWorker,
+  resetShaderCache,
+  ServerError,
+  BuildTimeoutError,
+  BuildConcurrencyError,
+  ShaderDataError,
+  JobNotFoundError,
+  type ServerConfig,
+  type BuildResult,
+  type CompiledMaterialOutput,
+  type CacheEntry,
+  type BuildJob,
+  type BuildStatus,
+  type BuildStatusMessage,
+  type BuildCache,
+  type BuildDatabase,
+  type QueueWorker,
+} from "./server/mod.ts";

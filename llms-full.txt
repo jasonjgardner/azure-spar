@@ -1,0 +1,553 @@
+# Azure Spar — Full LLM Reference
+
+> Complete technical reference for AI agents working with the azure-spar codebase.
+
+## Project Overview
+
+Azure Spar is a TypeScript rewrite of the Python [lazurite](https://github.com/veka0/lazurite) tool for Minecraft Bedrock Edition's RenderDragon graphics engine. It provides:
+
+1. **Material I/O** — Read/write `.material.bin` binary files (RenderDragon compiled material format)
+2. **Shader compilation** — Compile HLSL to DXIL via DirectX Shader Compiler (DXC) using pure `bun:ffi` COM vtable walking
+3. **Shader decompilation** — Restore HLSL source from compiled shader variants by analyzing flag permutations
+4. **BetterRTX pipeline** — End-to-end compilation for the BetterRTX ray tracing shader pack
+
+Repository: https://github.com/jasonjgardner/azure-spar
+License: LGPL-3.0
+Runtime: Bun (always `bun`/`bunx`, never `npm`/`npx`)
+Platform: Windows x64 (DXC FFI is Windows-only)
+
+---
+
+## Directory Structure
+
+```
+azure-spar/
+├── src/
+│   ├── mod.ts                    # Library barrel export (full public API)
+│   ├── main.ts                   # CLI entry point
+│   ├── types.ts                  # Shared type aliases
+│   ├── errors.ts                 # Base error classes
+│   ├── util.ts                   # Utility functions
+│   │
+│   ├── material/                 # Core material binary format (lazurite port)
+│   │   ├── mod.ts                # Module barrel
+│   │   ├── material.ts           # Material read/write/create
+│   │   ├── pass.ts               # Pass interface and I/O
+│   │   ├── variant.ts            # Variant interface and I/O
+│   │   ├── shader-definition.ts  # ShaderDefinition interface and I/O
+│   │   ├── bgfx-shader.ts        # BgfxShader/BgfxUniform interfaces and I/O
+│   │   ├── shader-input.ts       # ShaderInput interface and I/O
+│   │   ├── buffer.ts             # MaterialBuffer, SamplerState, CustomTypeInfo
+│   │   ├── uniform.ts            # Uniform interface and I/O
+│   │   ├── enums.ts              # All enums (ShaderStage, ShaderPlatform, etc.)
+│   │   ├── serialization.ts      # JSON serialization/deserialization
+│   │   ├── supported-platforms.ts # SupportedPlatforms helpers
+│   │   └── encryption.ts         # AES-GCM encryption/decryption
+│   │
+│   ├── binary/                   # Immutable binary reader/writer
+│   │   ├── mod.ts
+│   │   ├── reader.ts             # BinaryReader (offset-based)
+│   │   └── writer.ts             # BinaryWriter (dynamic buffer)
+│   │
+│   ├── decompiler/               # Shader code restoration
+│   │   ├── mod.ts
+│   │   ├── decompiler.ts         # Main decompilation logic
+│   │   ├── types.ts              # Decompiler-specific types
+│   │   ├── diffing.ts            # Variant diffing
+│   │   ├── permutation.ts        # Flag permutation handling
+│   │   ├── encoded-shader.ts     # Encoded shader representation
+│   │   ├── expression-processing.ts
+│   │   ├── expression-search.ts
+│   │   ├── grouped-shader.ts
+│   │   ├── flag-definition.ts
+│   │   ├── all-flags.ts
+│   │   ├── varying.ts
+│   │   └── processing.ts
+│   │
+│   ├── dxc/                      # DXC FFI bindings (Windows x64 only)
+│   │   ├── mod.ts                # DxcCompiler class (singleton)
+│   │   ├── types.ts              # DXC type definitions
+│   │   ├── errors.ts             # DxcError hierarchy
+│   │   ├── vtable.ts             # COM vtable helpers
+│   │   ├── guids.ts              # CLSID/IID constants
+│   │   └── wide-string.ts        # UTF-16LE string builder
+│   │
+│   ├── betterrtx/                # BetterRTX shader loading & config
+│   │   ├── mod.ts
+│   │   ├── manifest-types.ts     # ShaderEntry, MaterialManifest
+│   │   ├── config.ts             # Material/Project config parsing
+│   │   ├── register-bindings.ts  # Register binding extraction
+│   │   └── settings.ts           # User settings -> DXC defines
+│   │
+│   └── compiler/                 # Full pipeline orchestrator
+│       ├── mod.ts
+│       ├── material-builder.ts   # Material construction
+│       └── bgfx-wrapper.ts       # DXIL -> BgfxShader wrapper
+│
+├── scripts/
+│   ├── setup.ts                  # First-time setup (extract shaders, register bindings)
+│   └── test-dxc.ts               # DXC FFI smoke test
+│
+├── shaders/                      # Populated by scripts/setup.ts
+│   ├── manifest.json             # Compiler manifest
+│   ├── register-bindings.json    # Register slot defines
+│   ├── *.hlsl                    # Shader source files
+│   ├── *.hlsli                   # Shader include files
+│   └── *.h                       # Shader headers
+│
+├── docs/                         # Format documentation (from lazurite)
+│   ├── README.md                 # Docs index
+│   ├── material.md               # Material binary format schema
+│   ├── platforms.md              # Shader platform list
+│   └── supported_versions.md     # Format versions 22-25
+│
+├── .github/workflows/build.yml   # CI: compile materials from form inputs
+├── package.json
+├── tsconfig.json
+├── CLAUDE.md                     # AI agent project instructions
+├── llms.txt                      # Concise LLM reference
+└── llms-full.txt                 # This file
+```
+
+---
+
+## Core Type Definitions
+
+### Material (src/material/material.ts)
+
+```typescript
+interface Material {
+  readonly version: number                       // Format version: 22, 23, 24, or 25
+  readonly name: string                          // e.g., "RTXStub", "RTXPostFX.Tonemapping"
+  readonly encryption: EncryptionType            // NONE | SIMPLE_PASSPHRASE | KEY_PAIR
+  readonly parent: string                        // Parent material name
+  readonly buffers: readonly MaterialBuffer[]    // Textures, samplers, structured buffers
+  readonly uniforms: readonly Uniform[]          // vec4, mat3, mat4, external
+  readonly uniformOverrides: Record<string, string>  // name -> BUILTIN_* override ID
+  readonly passes: readonly Pass[]               // Render passes
+  readonly encryptionKey: Uint8Array
+  readonly encryptionNonce: Uint8Array
+}
+```
+
+Factory: `createMaterial(overrides?: Partial<Material>): Material`
+Read: `readMaterial(data: Uint8Array): Material`
+Write: `writeMaterial(material: Material): Uint8Array`
+
+### Pass (src/material/pass.ts)
+
+```typescript
+interface Pass {
+  readonly name: string                          // e.g., "Forward", "ColorPostProcess"
+  readonly supportedPlatforms: SupportedPlatforms
+  readonly fallbackPass: string
+  readonly defaultBlendMode: BlendMode
+  readonly defaultVariant: ShaderFlags           // Default flag values
+  readonly framebufferBinding: number            // v23+
+  readonly variants: readonly Variant[]
+}
+```
+
+### Variant (src/material/variant.ts)
+
+```typescript
+interface Variant {
+  readonly isSupported: boolean
+  readonly flags: ShaderFlags                    // Record<FlagName, FlagValue>
+  readonly shaders: readonly ShaderDefinition[]
+}
+```
+
+### ShaderDefinition (src/material/shader-definition.ts)
+
+```typescript
+interface ShaderDefinition {
+  readonly stage: ShaderStage                    // Vertex | Fragment | Compute
+  readonly platform: ShaderPlatform              // Direct3D_SM65, ESSL_310, etc.
+  readonly inputs: readonly ShaderInput[]
+  readonly hash: bigint
+  readonly bgfxShader: BgfxShader
+}
+```
+
+### BgfxShader (src/material/bgfx-shader.ts)
+
+```typescript
+interface BgfxShader {
+  readonly hash: number
+  readonly uniforms: readonly BgfxUniform[]
+  readonly groupSize: readonly number[]          // [x, y, z] for compute shaders
+  readonly shaderBytes: Uint8Array               // Compiled DXIL bytecode
+  readonly attributes: readonly number[]
+  readonly size: number
+}
+
+interface BgfxUniform {
+  readonly name: string
+  readonly typeBits: number
+  readonly count: number
+  readonly regIndex: number
+  readonly regCount: number
+}
+```
+
+### ShaderInput (src/material/shader-input.ts)
+
+```typescript
+interface ShaderInput {
+  readonly name: string
+  readonly type: InputType                       // float, vec2, vec3, vec4, mat4, int, uint, etc.
+  readonly semantic: InputSemantic               // POSITION, NORMAL, TEXCOORD, COLOR, etc.
+  readonly perInstance: boolean
+  readonly precision: Precision
+  readonly interpolation: Interpolation
+}
+```
+
+### MaterialBuffer (src/material/buffer.ts)
+
+```typescript
+interface MaterialBuffer {
+  readonly name: string
+  readonly reg1: number                          // Register slot (same as reg2)
+  readonly reg2: number
+  readonly type: BufferType                      // texture2D, structBuffer, rawBuffer, etc.
+  readonly precision: Precision
+  readonly access: BufferAccess                  // readonly, writeonly, readwrite
+  readonly textureFormat: string
+  readonly defaultTexture: string
+  readonly unorderedAccess: boolean
+  readonly alwaysOne: number
+  readonly texturePath: string
+  readonly samplerState: SamplerState
+  readonly customTypeInfo: CustomTypeInfo
+}
+```
+
+---
+
+## Enums (src/material/enums.ts)
+
+```typescript
+enum ShaderStage { Unknown = 0, Vertex = 1, Fragment = 2, Compute = 3 }
+enum ShaderPlatform {
+  Unknown = 0, Direct3D_SM40 = 1, Direct3D_SM50 = 5,
+  Direct3D_SM60 = 6, Direct3D_SM65 = 7,
+  ESSL_300 = 100, ESSL_310 = 101,
+  // ... GLSL_120, GLSL_430, Metal, Vulkan, Direct3D_XB1, Direct3D_XBX, Nvn, PSSL
+}
+enum EncryptionType { NONE = 0, SIMPLE_PASSPHRASE = 1, KEY_PAIR = 2 }
+enum BlendMode { Unspecified = 0, Alpha = 1, Add = 2, Subtract = 3, /* ... */ }
+enum BufferType { /* texture2D, texture2DArray, external2D, texture3D, textureCube, ... */ }
+enum BufferAccess { /* undefined, readonly, writeonly, readwrite */ }
+enum UniformType { /* vec4, mat3, mat4, external */ }
+enum InputType { /* float, vec2, vec3, vec4, int, ivec2, ... uint, uvec2, ... mat4 */ }
+enum Precision { /* (empty), lowp, mediump, highp */ }
+enum Interpolation { /* (empty), flat, smooth, noperspective, centroid */ }
+enum InputSemantic { /* POSITION, NORMAL, TANGENT, BITANGENT, COLOR, TEXCOORD, ... */ }
+```
+
+---
+
+## Compiler Pipeline (src/compiler/)
+
+### Types
+
+```typescript
+interface MaterialDefinition {
+  readonly name: string                          // e.g., "RTXStub"
+  readonly passes: readonly PassDefinition[]
+}
+
+interface PassDefinition {
+  readonly name: string
+  readonly shaders: readonly CompiledShader[]
+  readonly flags?: ShaderFlags
+  readonly blendMode?: BlendMode
+}
+
+interface CompiledShader {
+  readonly stage: ShaderStage
+  readonly platform: ShaderPlatform
+  readonly bgfxShader: BgfxShader
+  readonly inputs: readonly ShaderInput[]
+}
+
+interface CompileMaterialOptions {
+  readonly platform?: ShaderPlatform             // Default: Direct3D_SM65
+  readonly dxcPath?: string                      // Path to dxcompiler.dll
+  readonly additionalArgs?: readonly string[]
+  readonly registerDefines?: Record<string, string>
+  readonly includePaths?: readonly string[]
+  readonly userDefines?: Record<string, string>
+}
+
+interface CompileMaterialResult {
+  readonly material: Material
+  readonly binary: Uint8Array                    // Serialized .material.bin
+}
+
+interface WrapDxilOptions {
+  readonly dxilBytes: Uint8Array
+  readonly stage: ShaderStage
+  readonly uniforms?: readonly BgfxUniform[]
+  readonly groupSize?: readonly number[]
+}
+```
+
+### Functions
+
+```typescript
+// Full pipeline: HLSL -> DXC compile -> wrap -> build -> serialize
+compileMaterial(manifest: MaterialManifest, options?: CompileMaterialOptions): Promise<CompileMaterialResult>
+
+// Construct Material object from compiled shaders
+buildMaterial(definition: MaterialDefinition): Material
+
+// Wrap raw DXIL bytecode as BgfxShader
+wrapDxilAsBgfxShader(options: WrapDxilOptions): BgfxShader
+```
+
+---
+
+## DXC Compiler FFI (src/dxc/)
+
+### DxcCompiler Class
+
+```typescript
+class DxcCompiler {
+  constructor(dllPath?: string)
+  compile(options: DxcCompileOptions): DxcCompileResult
+  dispose(): void
+}
+
+// Singleton access
+getDxcCompiler(dllPath?: string): DxcCompiler
+disposeDxcCompiler(): void
+
+// Convenience (throws DxcCompilationError on failure)
+compileHLSL(source: string, options: DxcCompileOptions): Uint8Array
+```
+
+### DXC Types
+
+```typescript
+interface DxcCompileOptions {
+  readonly source: string
+  readonly entryPoint: string                    // e.g., "main", "CSMain"
+  readonly targetProfile: string                 // e.g., "cs_6_5", "ps_6_5"
+  readonly additionalArgs?: readonly string[]    // e.g., ["-enable-16bit-types"]
+  readonly defines?: Record<string, string>      // e.g., { DXR_1_1: "1" }
+  readonly includePaths?: readonly string[]
+}
+
+interface DxcCompileResult {
+  readonly success: boolean
+  readonly objectBytes?: Uint8Array              // DXIL bytecode
+  readonly errors?: string                       // Error/warning messages
+}
+```
+
+### DXC FFI Implementation Notes
+
+- Uses pure `bun:ffi` with COM vtable walking (no C compiler or N-API)
+- `bun:ffi cc` is broken on Windows (Bun issue #14545) — not used
+- `Pointer` is a branded type in Bun — use `asPointer()` to cast `number -> Pointer`
+- `CFunction()` is a function call, NOT `new CFunction()`
+- `IDxcBlob::GetBufferSize` returns `u64` (bigint) — must `Number()` before use
+- String arguments are UTF-16LE wide strings built in `wide-string.ts`
+- Include handler via `IDxcUtils::CreateDefaultIncludeHandler` (vtable index 9)
+
+---
+
+## BetterRTX Module (src/betterrtx/)
+
+### Shader Loading
+
+```typescript
+// Load single shader file (embedded or disk)
+loadShaderSource(fileName: string): Promise<string>
+
+// Load all shader sources for a manifest
+loadManifestSources(manifest: MaterialManifest): Promise<Map<string, string>>
+
+// Load all material manifests from manifest.json
+loadManifests(): Promise<MaterialManifest[]>
+
+// Load register binding defines from register-bindings.json
+loadRegisterBindings(): Promise<Record<string, Record<string, string>>>
+```
+
+### Register Bindings
+
+```typescript
+// Extract s_<BufferName>_REG defines from a base material
+extractRegisterDefines(material: Material): Record<string, string>
+
+// Convert defines to DXC -D arguments
+registerDefinesToArgs(defines: Record<string, string>): string[]
+
+// Merge define objects (override takes precedence)
+mergeRegisterDefines(base: Record<string, string>, override: Record<string, string>): Record<string, string>
+```
+
+### Manifest Types
+
+```typescript
+interface ShaderEntry {
+  readonly name: string                          // Shader pass name
+  readonly fileName: string                      // Source file path
+  readonly stage: ShaderStage
+  readonly entryPoint: string                    // e.g., "main"
+  readonly targetProfile: string                 // e.g., "cs_6_5"
+  readonly defines?: Record<string, string>
+  readonly compilerOptions?: readonly string[]
+}
+
+interface MaterialManifest {
+  readonly materialName: string                  // e.g., "RTXStub"
+  readonly passName: string
+  readonly shaders: readonly ShaderEntry[]
+  readonly compilerOptions?: readonly string[]
+}
+```
+
+### User Settings
+
+```typescript
+// Parse JSON settings file
+parseSettingsJson(json: string): RawSettings
+
+// Convert settings to DXC -D defines
+settingsToDefines(settings: RawSettings): SettingsDefines
+
+// Load and parse settings file
+loadSettingsFile(path: string): Promise<SettingsDefines>
+
+type RawSettings = Record<string, SettingValue>
+type SettingValue = string | number | boolean
+type SettingsDefines = Record<string, string>
+```
+
+Settings JSON example:
+```json
+{
+  "TONEMAPPING_TYPE": 1,
+  "ENABLE_DOF": true,
+  "DOF_APERTURE_SIZE": 0.012,
+  "$comment": "Keys starting with $ are metadata and ignored"
+}
+```
+
+---
+
+## Dual-Mode Shader Loading
+
+Shaders load differently depending on how the tool is run:
+
+- **Dev mode** (`bun run src/main.ts`): reads from `shaders/` directory on disk, populated by `scripts/setup.ts`
+- **Compiled mode** (`./brtxbuilder.exe`): reads from `Bun.embeddedFiles` baked into the executable at compile time
+
+The `bun build --compile` step embeds all `./shaders/**/*.hlsl`, `./shaders/**/*.hlsli`, `./shaders/**/*.h`, `./shaders/manifest.json`, and `./shaders/register-bindings.json` into the binary.
+
+---
+
+## Define Priority (lowest -> highest)
+
+When multiple define sources provide the same key:
+
+1. User settings (from `--settings` JSON file)
+2. Register bindings (from base material extraction)
+3. Per-shader pass defines (from manifest)
+
+Higher priority sources override lower ones.
+
+---
+
+## Target Materials
+
+BetterRTX compiles three materials:
+
+| Material | Type | Passes | Register Bindings |
+|----------|------|--------|-------------------|
+| RTXStub | Compute (SM 6.5) | ~49 | 0 (uses UAV registers) |
+| RTXPostFX.Tonemapping | Fragment (SM 6.5) | 1-3 | 4 |
+| RTXPostFX.Bloom | Fragment (SM 6.5) | 1-3 | 2 |
+
+RTXStub compiler args: `-enable-16bit-types -Qstrip_reflect -DDXR_1_1 -no-warnings`
+RTXPostFX compiler args: `-Qstrip_reflect`
+
+---
+
+## Error Hierarchy
+
+```
+Error
+├── MaterialError (src/errors.ts)
+│   ├── MaterialFormatError       — Invalid .material.bin structure
+│   ├── UnsupportedVersionError   — Version outside 22-25 range
+│   └── EncryptionError           — Decryption failure
+├── DecompilerError (src/errors.ts)
+│   └── (generic decompilation failures)
+├── DxcError (src/dxc/errors.ts)
+│   ├── DxcLoadError              — DLL or COM initialization failure
+│   └── DxcCompilationError       — HLSL compilation failure (includes error text)
+└── SettingsError (src/errors.ts)
+    └── (invalid user settings)
+```
+
+---
+
+## Constants
+
+```typescript
+MAGIC = 168942106n               // 0x0A13C0DEn — material file magic number
+COMPILED_MATERIAL_DEFINITION = "RenderDragon.CompiledMaterialDefinition"
+INITIAL_VERSION = 22             // Oldest supported format version
+LATEST_VERSION = 25              // Newest supported format version
+EXTENSION = ".material.bin"
+JSON_EXTENSION = ".material.json"
+JSON_FORMAT_VERSION = 1
+```
+
+---
+
+## TypeScript Configuration
+
+```json
+{
+  "target": "ESNext",
+  "module": "Preserve",
+  "moduleResolution": "bundler",
+  "strict": true,
+  "noUncheckedIndexedAccess": true,
+  "verbatimModuleSyntax": true,
+  "noEmit": true,
+  "skipLibCheck": true,
+  "allowImportingTsExtensions": true
+}
+```
+
+---
+
+## Conventions
+
+- All data structures use `readonly` properties (immutable)
+- Factory functions accept `Partial<T>` with defaults (e.g., `createMaterial()`)
+- Error classes extend per-module base errors
+- Each module has a `mod.ts` barrel export
+- Zero runtime dependencies — only `@types/bun` and `typescript` as dev/peer deps
+- Files organized by feature/domain, not by type
+- Small focused files (200-400 lines typical)
+
+---
+
+## CI / GitHub Actions
+
+Workflow: `.github/workflows/build.yml` (manual trigger with form inputs)
+
+1. Downloads pre-built `brtxbuilder.exe` (URL in secrets)
+2. Downloads DXC binaries from Microsoft's DirectX repo
+3. Generates `user-settings.json` from GitHub Actions form inputs
+4. Runs: `brtxbuilder.exe --settings user-settings.json --output ./output`
+5. Uploads artifacts: `RTXStub.material.bin`, `RTXPostFX.Tonemapping.material.bin`, `RTXPostFX.Bloom.material.bin`

@@ -25,6 +25,7 @@ export {
   type MaterialConfig,
   type ProjectConfig,
 } from "./config.ts";
+export { DEFAULT_SETTINGS, DEFAULT_SETTING_KEYS } from "./defaults.ts";
 
 // ── Shader Map (lazy-initialized) ──────────────────────────────
 

@@ -5,12 +5,18 @@
   "module": "src/mod.ts",
   "main": "src/mod.ts",
   "type": "module",
+  "scripts": {
+    "serve": "bun run ./src/serve.ts",
+    "inspect": "bunx @modelcontextprotocol/inspector -- --transport streamablehttp --url http://localhost:3000/mcp"
+  },
   "exports": {
     ".": "./src/mod.ts",
     "./compiler": "./src/compiler/mod.ts",
     "./betterrtx": "./src/betterrtx/mod.ts",
     "./material": "./src/material/mod.ts",
-    "./dxc": "./src/dxc/mod.ts"
+    "./dxc": "./src/dxc/mod.ts",
+    "./server": "./src/server/mod.ts",
+    "./mcp": "./src/mcp/mod.ts"
   },
   "files": [
     "src/",
@@ -26,5 +32,9 @@
   },
   "peerDependencies": {
     "typescript": "^5"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "zod": "^4.3.6"
   }
 }

@@ -2,7 +2,7 @@ import { readMaterial, writeMaterial } from "./src/material/material.ts";
 import { SHADER_PLATFORM_NAMES, SHADER_STAGE_NAMES } from "./src/material/enums.ts";
 import { serializeMaterialProperties, serializeMinimal } from "./src/material/serialization.ts";
 
-const filePath = process.argv[2] ?? "M:/Games/Minecraft for Windows/Content/data/renderer/materials/RTXStub.material.bin";
+const filePath = process.argv[2] ?? "C:/XboxGames/Minecraft for Windows/Content/data/renderer/materials/RTXStub.material.bin";
 
 console.log(`Reading: ${filePath}\n`);
 

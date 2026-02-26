@@ -5,6 +5,7 @@
  * config.json (per material) defines: compiler type/options, pass→shader mappings.
  */
 
+import { JSON5 } from "bun";
 import { ShaderStage } from "../material/enums.ts";
 import type { ShaderEntry, MaterialManifest } from "./manifest-types.ts";
 
@@ -44,11 +45,19 @@ export interface ProjectConfig {
 // ── Parsing ───────────────────────────────────────────────────────
 
 export function parseProjectConfig(json: string): ProjectConfig {
-  return JSON.parse(json) as ProjectConfig;
+  try {
+    return JSON5.parse(json) as ProjectConfig;
+  } catch (error) {
+    throw new Error(`Failed to parse project config: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 export function parseMaterialConfig(json: string): MaterialConfig {
-  return JSON.parse(json) as MaterialConfig;
+  try {
+    return JSON5.parse(json) as MaterialConfig;
+  } catch (error) {
+    throw new Error(`Failed to parse material config: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 // ── Stage detection ───────────────────────────────────────────────

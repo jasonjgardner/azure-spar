@@ -1,0 +1,71 @@
+# Azure Spar
+
+> TypeScript rewrite of [lazurite](https://github.com/veka0/lazurite) for Minecraft Bedrock Edition RenderDragon shader materials.
+
+Reads/writes `.material.bin` files, decompiles shader variants, and compiles custom HLSL shaders via DXC into replacement materials for the [BetterRTX](https://github.com/BetterRTX) ray tracing shader pack.
+
+## Quick Facts
+
+- Runtime: Bun (use `bun` / `bunx`, never `npm` / `npx`)
+- Language: TypeScript (strict mode, immutable data structures)
+- Platform: Windows x64 (DXC FFI requires `dxcompiler.dll`)
+- Zero runtime dependencies
+- License: LGPL-3.0
+
+## Repository
+
+- Source: https://github.com/jasonjgardner/azure-spar
+- Upstream: https://github.com/veka0/lazurite (Python original)
+
+## Commands
+
+```sh
+# First-time setup
+bun run scripts/setup.ts --materials "path/to/minecraft/materials" --archive shader_source.tar.gz
+
+# Compile materials (dev mode)
+bun run src/main.ts --output ./output --settings user-settings.json
+
+# Compile to standalone executable
+bun build --compile src/main.ts --outfile brtxbuilder ./shaders/**/*.hlsl ./shaders/**/*.hlsli ./shaders/**/*.h ./shaders/manifest.json ./shaders/register-bindings.json
+
+# Type check
+bunx tsc --noEmit
+```
+
+## Architecture
+
+### Module Dependency Flow
+
+```
+src/main.ts          CLI entry point
+  -> src/compiler/   Pipeline orchestrator
+       -> src/dxc/       HLSL -> DXIL compilation (bun:ffi COM vtable walking)
+       -> src/betterrtx/ Shader source loading, manifest/config parsing
+       -> src/material/  Material binary I/O (ported from lazurite)
+            -> src/binary/   Offset-based BinaryReader/BinaryWriter
+src/decompiler/      Restore HLSL from compiled shader variants (standalone)
+```
+
+### Compilation Pipeline
+
+```
+Embedded HLSL -> DXC compile -> DXIL bytecode -> BgfxShader wrap -> Material build -> .material.bin
+```
+
+### Package Exports
+
+```
+azure-spar           -> src/mod.ts          (full public API)
+azure-spar/compiler  -> src/compiler/mod.ts (compilation pipeline)
+azure-spar/betterrtx -> src/betterrtx/mod.ts (shader loading & config)
+azure-spar/material  -> src/material/mod.ts  (material binary format)
+azure-spar/dxc       -> src/dxc/mod.ts       (DXC compiler FFI)
+```
+
+## Detailed Documentation
+
+- [Full LLM reference](llms-full.txt): Complete API, types, and architecture details
+- [Material format](docs/material.md): `.material.bin` binary format schema
+- [Shader platforms](docs/platforms.md): Supported shader platforms
+- [Supported versions](docs/supported_versions.md): Format versions and Minecraft releases
