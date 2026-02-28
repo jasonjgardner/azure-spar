@@ -13,6 +13,7 @@ export function registerPrompts(server: McpServer): void {
   registerCreateShaderPreset(server);
   registerTuneSettingCategory(server);
   registerTroubleshootSettings(server);
+  registerInstallMaterials(server);
 }
 
 // ── create-shader-preset ─────────────────────────────────────────
@@ -160,5 +161,123 @@ function registerTroubleshootSettings(server: McpServer): void {
         },
       ],
     }),
+  );
+}
+
+// ── install-materials ────────────────────────────────────────────
+
+/** Material file names produced by the BetterRTX compilation pipeline. */
+const MATERIAL_FILES = [
+  "RTXStub.material.bin",
+  "RTXPostFX.Tonemapping.material.bin",
+  "RTXPostFX.Bloom.material.bin",
+] as const;
+
+function registerInstallMaterials(server: McpServer): void {
+  server.registerPrompt(
+    "install-materials",
+    {
+      title: "Install Compiled Materials",
+      description:
+        "Guide the user through installing compiled BetterRTX .material.bin files into their Minecraft Bedrock Edition installation on Windows.",
+      argsSchema: {
+        sourcePath: z
+          .string()
+          .describe(
+            "Directory containing the compiled .material.bin files to install.",
+          ),
+        edition: z
+          .enum(["stable", "preview"])
+          .optional()
+          .describe(
+            'Minecraft edition to target. "stable" = Minecraft for Windows, "preview" = Minecraft Preview for Windows. Defaults to stable.',
+          ),
+        installDrive: z
+          .string()
+          .optional()
+          .describe(
+            "Drive letter where Xbox Games are installed (e.g. C, D). If omitted, the LLM will search common drives.",
+          ),
+      },
+    },
+    ({ sourcePath, edition, installDrive }) => {
+      const editionFolder =
+        edition === "preview"
+          ? "Minecraft Preview for Windows"
+          : "Minecraft for Windows";
+      const materialsRelPath = `Content\\data\\renderer\\materials`;
+
+      const driveHint = installDrive
+        ? `The user says Minecraft is on the **${installDrive}:** drive.`
+        : "The user has not specified a drive letter — search common locations.";
+
+      return {
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: [
+                `Install my compiled BetterRTX shader materials into Minecraft Bedrock Edition (${edition ?? "stable"}) on Windows.`,
+                "",
+                `Source directory with compiled files: ${sourcePath}`,
+                driveHint,
+                "",
+                "Follow these steps using **PowerShell** commands:",
+                "",
+                "**Step 1 — Locate the Minecraft installation**",
+                `Find the "${editionFolder}" folder under \\XboxGames on the target drive.`,
+                installDrive
+                  ? `Check: ${installDrive}:\\XboxGames\\${editionFolder}`
+                  : [
+                      "Search these drives in order: C, D, E, F.",
+                      "For each drive, test whether the path exists:",
+                      `  <drive>:\\XboxGames\\${editionFolder}\\${materialsRelPath}`,
+                      "Stop at the first match. If none found, ask the user for the correct path.",
+                    ].join("\n"),
+                "",
+                "Use PowerShell `Test-Path` to verify the directory exists before proceeding.",
+                "",
+                "**Step 2 — Verify compiled files exist**",
+                `Confirm that all three material files are present in the source directory:`,
+                ...MATERIAL_FILES.map((f) => `  - ${f}`),
+                "",
+                "Use `Test-Path` for each file. If any are missing, stop and report the error.",
+                "",
+                "**Step 3 — Back up existing materials**",
+                "Before overwriting, create timestamped backups of the originals:",
+                '```powershell',
+                `$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"`,
+                `$backupDir = Join-Path $materialsDir "backups_$timestamp"`,
+                "New-Item -ItemType Directory -Path $backupDir -Force",
+                "```",
+                `Copy each of the three original .material.bin files from the Minecraft materials directory into $backupDir.`,
+                "If an original file does not exist (first-time install), skip its backup without error.",
+                "",
+                "**Step 4 — Copy compiled materials**",
+                `Copy all three .material.bin files from the source directory to:`,
+                `  <drive>:\\XboxGames\\${editionFolder}\\${materialsRelPath}\\`,
+                "",
+                "Use `Copy-Item -Force` to overwrite existing files.",
+                "",
+                "**Step 5 — Verify installation**",
+                "After copying, verify each destination file exists and compare file sizes:",
+                "```powershell",
+                '(Get-Item $dest).Length -eq (Get-Item $src).Length',
+                "```",
+                "",
+                "**Important notes:**",
+                "- Minecraft must be **closed** before installing materials. Warn the user if `Minecraft.Windows.exe` is running.",
+                "- This workflow is **Windows-only**. The XboxGames directory structure is specific to the Microsoft Store / Xbox app installation.",
+                "- If the materials directory does not exist, do NOT create it — this means Minecraft is not installed correctly or the path is wrong.",
+                "- Always preserve the backup directory path in the output so the user can restore originals if needed.",
+              ]
+                .filter(Boolean)
+                .join("\n"),
+            },
+          },
+        ],
+      };
+    },
   );
 }
