@@ -36,7 +36,7 @@ test-*.ts
 llms*.txt
 settings.example.json
 
-# Shader sources - mounted as volume, not baked in
+# Shader sources
 shaders/
-shader_source.tar.gz
+*.tar.gz
 materials-backup/

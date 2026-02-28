@@ -11,13 +11,21 @@ services:
         CORS_ORIGIN: "*"
     ports:
       - "3000:3000"
+    # For local dev: mount shaders from disk and override SHADERS_PATH
+    # so the R2 FUSE startup is skipped (tigrisfs won't have credentials).
+    # Use `docker compose up --build` after running scripts/setup.ts.
     volumes:
-      - builds-data:/data
-      - shaders-volume:/shaders
+      - ./shaders:/mnt/r2:ro
+      - builds-data:/tmp
     environment:
       - CORS_ORIGIN=*
-      - SHADERS_PATH=/shaders
-      - DB_PATH=/data/builds.sqlite
+      - SHADERS_PATH=/mnt/r2
+      - DB_PATH=/tmp/builds.sqlite
+      # Dummy values — tigrisfs will fail but the bind mount provides shaders
+      - R2_ACCOUNT_ID=local
+      - R2_BUCKET_NAME=local
+    # Override entrypoint to skip tigrisfs mount in local dev
+    entrypoint: ["bun", "run", "src/serve.ts"]
     restart: unless-stopped
     develop:
       watch:
@@ -25,9 +33,9 @@ services:
           action: rebuild
         - path: "./package.json"
           action: rebuild
+        - path: "./shaders"
+          action: rebuild
 
 volumes:
   builds-data:
-    driver: local
-  shaders-volume:
     driver: local

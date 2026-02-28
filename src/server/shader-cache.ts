@@ -1,15 +1,23 @@
 /**
  * Lazy-loaded shader data cache.
  *
- * On first call, loads the shader source archive, discovers material
- * manifests, extracts register bindings from vanilla materials, and
- * writes shader files to a temp directory for DXC #include resolution.
+ * On first call, loads shader manifests, register bindings, and source
+ * files. Supports two modes:
+ *
+ * 1. **Directory mode** — when `<shadersVolume>/manifest.json` exists,
+ *    reads the pre-built manifest and shader files directly from the
+ *    filesystem. Ideal for Docker / Cloudflare Containers where shader
+ *    data is baked into the image.
+ *
+ * 2. **Archive mode** — reads `shader_source.tar.gz` from the volume,
+ *    discovers materials via `config.json` entries, and extracts files.
+ *    Original mode used by the local Docker Compose setup.
  *
  * All subsequent calls return the cached result.
  */
 
-import { resolve, dirname, extname } from "node:path";
-import { mkdir, rm } from "node:fs/promises";
+import { resolve, dirname, extname, relative, join } from "node:path";
+import { mkdir, rm, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { readMaterial } from "../material/material.ts";
 import { extractRegisterDefines } from "../betterrtx/register-bindings.ts";
@@ -18,6 +26,7 @@ import {
   discoverMaterials,
   buildManifestFromConfig,
 } from "../betterrtx/config.ts";
+import type { MaterialManifest } from "../betterrtx/manifest-types.ts";
 import { TARGET_MATERIALS, type ShaderData } from "./types.ts";
 import { ShaderDataError } from "./errors.ts";
 
@@ -49,7 +58,15 @@ export async function loadShaderData(
   }
 
   try {
-    _shaderData = await loadShaderDataFromVolume(shadersVolume, archivePrefix);
+    // Try directory mode first (pre-built manifest.json + extracted shaders),
+    // then fall back to archive mode (shader_source.tar.gz).
+    const manifestPath = resolve(shadersVolume, "manifest.json");
+    const hasManifest = await Bun.file(manifestPath).exists();
+
+    _shaderData = hasManifest
+      ? await loadShaderDataFromDirectory(shadersVolume)
+      : await loadShaderDataFromVolume(shadersVolume, archivePrefix);
+
     _shaderDataKey = key;
     return _shaderData;
   } catch (err) {
@@ -59,6 +76,114 @@ export async function loadShaderData(
     );
   }
 }
+
+// ── Directory Mode ──────────────────────────────────────────────
+
+/**
+ * Load shader data from a pre-extracted directory containing
+ * manifest.json, register-bindings.json, and shader source files.
+ *
+ * Expected layout:
+ * ```
+ * <shadersVolume>/
+ * ├── manifest.json                       (pre-built MaterialManifest[])
+ * ├── register-bindings.json              (register slot defines per material)
+ * ├── RTXStub/shaders/...                 (HLSL sources)
+ * ├── RTXPostFX.Tonemapping/shaders/...
+ * └── RTXPostFX.Bloom/shaders/...
+ * ```
+ */
+async function loadShaderDataFromDirectory(
+  shadersVolume: string,
+): Promise<ShaderData> {
+  // 1. Load pre-built manifest
+  const manifestPath = resolve(shadersVolume, "manifest.json");
+  const manifests = (await Bun.file(manifestPath).json()) as MaterialManifest[];
+
+  if (manifests.length === 0) {
+    throw new ShaderDataError(
+      `manifest.json at "${manifestPath}" is empty — no materials defined.`,
+    );
+  }
+
+  // 2. Collect shader source files from material directories
+  const shaderExts = new Set([".hlsl", ".hlsli", ".h"]);
+  const shaderFiles = new Map<string, Uint8Array>();
+
+  async function walkDir(dir: string, base: string): Promise<void> {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = join(dir, entry.name);
+      const relPath = join(base, entry.name).replace(/\\/g, "/");
+
+      if (entry.isDirectory()) {
+        await walkDir(fullPath, relPath);
+        continue;
+      }
+
+      if (!shaderExts.has(extname(entry.name).toLowerCase())) continue;
+      shaderFiles.set(relPath, new Uint8Array(await Bun.file(fullPath).arrayBuffer()));
+    }
+  }
+
+  // Walk each material directory for shader sources
+  const materialNames = [
+    ...new Set(manifests.map((m) => m.materialName)),
+  ];
+  for (const name of materialNames) {
+    const materialDir = resolve(shadersVolume, name);
+    const exists = await Bun.file(join(materialDir, ".")).exists().catch(() => false);
+    // readdir will throw if directory doesn't exist — catch and skip
+    try {
+      await walkDir(materialDir, name);
+    } catch {
+      console.warn(`[Server] Material directory not found: ${materialDir}`);
+    }
+  }
+
+  // Also collect top-level shared shader files (e.g. data.hlsl)
+  try {
+    const topEntries = await readdir(shadersVolume, { withFileTypes: true });
+    for (const entry of topEntries) {
+      if (entry.isDirectory()) continue;
+      if (!shaderExts.has(extname(entry.name).toLowerCase())) continue;
+      const fullPath = join(shadersVolume, entry.name);
+      shaderFiles.set(entry.name, new Uint8Array(await Bun.file(fullPath).arrayBuffer()));
+    }
+  } catch {
+    // Non-critical — shared files are optional
+  }
+
+  // 3. Load register bindings
+  const registerBindings = await loadRegisterBindings(shadersVolume);
+
+  // 4. Write shader sources to temp for DXC #include resolution
+  const tempShadersRoot = resolve(tmpdir(), "azure-spar-shaders");
+  await mkdir(tempShadersRoot, { recursive: true });
+
+  for (const [relativePath, content] of shaderFiles) {
+    const outPath = resolve(tempShadersRoot, relativePath);
+
+    if (!outPath.startsWith(tempShadersRoot)) {
+      throw new ShaderDataError(
+        `Shader path traversal detected: "${relativePath}"`,
+      );
+    }
+
+    await mkdir(dirname(outPath), { recursive: true });
+    await Bun.write(outPath, content);
+  }
+
+  console.log(
+    `[Server] Directory mode: loaded ${manifests.length} manifests, ` +
+      `${shaderFiles.size} shader files, ` +
+      `${Object.keys(registerBindings).length} register binding sets`,
+  );
+
+  return { manifests, registerBindings, shaderFiles, tempShadersRoot };
+}
+
+// ── Archive Mode ────────────────────────────────────────────────
 
 async function loadShaderDataFromVolume(
   shadersVolume: string,
@@ -190,9 +315,17 @@ async function loadRegisterBindings(
   if (loadedFromVanilla) return registerBindings;
 
   // Fallback: load from pre-extracted register-bindings.json
-  const jsonPath = resolve(shadersVolume, "shaders", "register-bindings.json");
-  const jsonFile = Bun.file(jsonPath);
-  if (await jsonFile.exists()) {
+  // Try both <shadersVolume>/register-bindings.json (directory mode)
+  // and <shadersVolume>/shaders/register-bindings.json (archive mode)
+  const candidatePaths = [
+    resolve(shadersVolume, "register-bindings.json"),
+    resolve(shadersVolume, "shaders", "register-bindings.json"),
+  ];
+
+  for (const jsonPath of candidatePaths) {
+    const jsonFile = Bun.file(jsonPath);
+    if (!(await jsonFile.exists())) continue;
+
     try {
       const parsed = (await jsonFile.json()) as RegisterBindingsMap;
       console.log(
@@ -201,7 +334,7 @@ async function loadRegisterBindings(
       return parsed;
     } catch (err) {
       console.warn(
-        `[Server] Failed to parse register-bindings.json: ${err}`,
+        `[Server] Failed to parse register-bindings.json at ${jsonPath}: ${err}`,
       );
     }
   }
