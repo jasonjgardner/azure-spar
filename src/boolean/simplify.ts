@@ -1,7 +1,23 @@
 /**
  * Quine-McCluskey boolean minimization.
  * Replaces sympy.simplify_logic — only needs AND, OR, NOT on boolean variables.
+ *
+ * Uses numpy-ts for vectorized pairwise implicant comparison via broadcasting,
+ * replacing the O(n²) scalar inner loop with batch ndarray operations.
  */
+
+import {
+  array,
+  reshape,
+  bitwise_xor,
+  bitwise_and,
+  subtract,
+  not_equal,
+  equal,
+  logical_and,
+  nonzero,
+  triu,
+} from "numpy-ts/core";
 
 export interface SimplifiedExpression {
   /** Expression in "A & B | ~C" format (sympy-style) */
@@ -44,6 +60,12 @@ export function simplifyLogic(
 
 // ── Quine-McCluskey Core ────────────────────────────────────────
 
+/**
+ * Groups implicants by mask value, then uses numpy-ts broadcasting
+ * to compute all pairwise XOR differences within each group at once.
+ * Valid pairs (differing in exactly one masked bit) are extracted
+ * from the upper triangle of the result matrix.
+ */
 function findPrimeImplicants(
   minterms: readonly number[],
   numVars: number,
@@ -57,23 +79,57 @@ function findPrimeImplicants(
   const primeImplicants: Implicant[] = [];
 
   while (implicants.length > 0) {
+    // Group implicants by mask value for vectorized comparison
+    const maskGroups = new Map<number, number[]>();
+    for (let i = 0; i < implicants.length; i++) {
+      const mask = implicants[i]!.mask;
+      const group = maskGroups.get(mask);
+      if (group === undefined) {
+        maskGroups.set(mask, [i]);
+        continue;
+      }
+      group.push(i);
+    }
+
     const used = new Set<number>();
     const newImplicants: Implicant[] = [];
     const seen = new Set<string>();
 
-    for (let i = 0; i < implicants.length; i++) {
-      for (let j = i + 1; j < implicants.length; j++) {
-        const a = implicants[i]!;
-        const b = implicants[j]!;
+    for (const [mask, groupIndices] of maskGroups) {
+      if (groupIndices.length < 2) continue;
 
-        if (a.mask !== b.mask) continue;
+      // Build value array for this mask group
+      const values = array(
+        groupIndices.map((idx) => implicants[idx]!.value),
+        "int32",
+      );
 
+      // Vectorized pairwise XOR via broadcasting: [n,1] XOR [1,n] → [n,n]
+      const col = reshape(values, [-1, 1]);
+      const row = reshape(values, [1, -1]);
+      const diffs = bitwise_xor(col, row);
+
+      // Batch check: diff != 0, exactly one bit set, and bit is in mask
+      const nonZero = not_equal(diffs, 0);
+      const oneBit = equal(bitwise_and(diffs, subtract(diffs, 1)), 0);
+      const inMask = not_equal(bitwise_and(diffs, mask), 0);
+      const validPairs = triu(logical_and(logical_and(nonZero, oneBit), inMask), 1);
+
+      // Extract valid pair indices from upper triangle
+      const pairIndices = nonzero(validPairs);
+      const rowList = pairIndices[0]!.tolist() as number[];
+      const colList = pairIndices[1]!.tolist() as number[];
+
+      for (let p = 0; p < rowList.length; p++) {
+        const localI = rowList[p]!;
+        const localJ = colList[p]!;
+        const origI = groupIndices[localI]!;
+        const origJ = groupIndices[localJ]!;
+        const a = implicants[origI]!;
+        const b = implicants[origJ]!;
         const diff = a.value ^ b.value;
-        // Must differ in exactly one bit that is in the mask
-        if (diff === 0 || (diff & (diff - 1)) !== 0) continue;
-        if ((diff & a.mask) === 0) continue;
 
-        const newMask = a.mask & ~diff;
+        const newMask = mask & ~diff;
         const newValue = a.value & newMask;
         const key = `${newMask}:${newValue}`;
 
@@ -86,8 +142,8 @@ function findPrimeImplicants(
           });
         }
 
-        used.add(i);
-        used.add(j);
+        used.add(origI);
+        used.add(origJ);
       }
     }
 

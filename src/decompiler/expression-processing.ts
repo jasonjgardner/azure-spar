@@ -10,6 +10,16 @@ import {
   type ExpressionSearchInput,
   JoinType,
 } from "./expression-search.ts";
+import {
+  arange,
+  bitwise_and,
+  not_equal,
+  logical_and,
+  logical_or,
+  logical_not,
+  nonzero,
+  zeros,
+} from "numpy-ts/core";
 
 // ── Token → Macro Conversion ────────────────────────────────────
 
@@ -32,36 +42,11 @@ export function tokenToMacro(token: ExpressionSearchToken): string {
 // ── Expression Simplification ───────────────────────────────────
 
 /**
- * Evaluates a token list against a macro variable assignment (truth table row).
- * Each macro is either "defined" (true) or "not defined" (false).
- */
-function evaluateTokensWithMacros(
-  tokens: readonly ExpressionSearchToken[],
-  macroAssignment: ReadonlyMap<string, boolean>,
-): boolean {
-  for (let i = tokens.length - 1; i >= 0; i--) {
-    const token = tokens[i]!;
-    const macro = tokenToMacro(token);
-    let tokenValue = macroAssignment.get(macro) ?? false;
-
-    if (token.isNegative) {
-      tokenValue = !tokenValue;
-    }
-
-    if (token.joinType === JoinType.And) {
-      if (!tokenValue) return false;
-    } else if (token.joinType === JoinType.Or) {
-      if (tokenValue) return true;
-    } else {
-      return tokenValue;
-    }
-  }
-
-  return false;
-}
-
-/**
  * Builds a truth table for a token list and returns the minterms and variables.
+ *
+ * Uses numpy-ts ndarrays to vectorize evaluation across all 2^n rows
+ * simultaneously, avoiding per-row Map allocations and enabling
+ * batch boolean operations via broadcasting.
  */
 function buildTruthTable(
   tokens: readonly ExpressionSearchToken[],
@@ -76,16 +61,37 @@ function buildTruthTable(
 
   if (numVars === 0) return { variables, minterms: [] };
 
-  const minterms: number[] = [];
-  for (let i = 0; i < (1 << numVars); i++) {
-    const assignment = new Map<string, boolean>();
-    for (let j = 0; j < numVars; j++) {
-      assignment.set(variables[j]!, (i & (1 << (numVars - 1 - j))) !== 0);
-    }
-    if (evaluateTokensWithMacros(tokens, assignment)) {
-      minterms.push(i);
-    }
+  const totalRows = 1 << numVars;
+  const rows = arange(totalRows, undefined, undefined, "int32");
+
+  // Build boolean column for each variable: (row >> (numVars-1-j)) & 1 != 0
+  const macroColumns = new Map<string, ReturnType<typeof not_equal>>();
+  for (let j = 0; j < numVars; j++) {
+    const bitMask = 1 << (numVars - 1 - j);
+    macroColumns.set(variables[j]!, not_equal(bitwise_and(rows, bitMask), 0));
   }
+
+  // Evaluate token expression across all rows simultaneously.
+  // Tokens form a flat left-to-right chain of AND/OR ops.
+  // Token[0] is always JoinType.Initial (the base value).
+  const firstToken = tokens[0]!;
+  const firstCol = macroColumns.get(tokenToMacro(firstToken)) ?? zeros([totalRows], "bool");
+  let result = firstToken.isNegative ? logical_not(firstCol) : firstCol;
+
+  for (let i = 1; i < tokens.length; i++) {
+    const token = tokens[i]!;
+    const col = macroColumns.get(tokenToMacro(token)) ?? zeros([totalRows], "bool");
+    const tokenCol = token.isNegative ? logical_not(col) : col;
+
+    if (token.joinType === JoinType.And) {
+      result = logical_and(result, tokenCol);
+      continue;
+    }
+    result = logical_or(result, tokenCol);
+  }
+
+  // Extract minterm indices where the expression evaluates to true
+  const minterms = nonzero(result)[0]!.tolist() as number[];
 
   return { variables, minterms };
 }

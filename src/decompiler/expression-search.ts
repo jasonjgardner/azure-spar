@@ -11,6 +11,16 @@ import type {
   FlagName,
   FlagValue,
 } from "../types.ts";
+import type { NDArrayCore } from "numpy-ts/core";
+import {
+  array,
+  zeros,
+  logical_and,
+  logical_or,
+  logical_not,
+  equal,
+  sum,
+} from "numpy-ts/core";
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -57,9 +67,13 @@ export function evaluateExpression(
 
     if (token.joinType === JoinType.And) {
       if (!tokenValue) return false;
-    } else if (token.joinType === JoinType.Or) {
+    }
+
+    if (token.joinType === JoinType.Or) {
       if (tokenValue) return true;
-    } else {
+    }
+
+    if (token.joinType === JoinType.Initial) {
       return tokenValue;
     }
   }
@@ -67,33 +81,108 @@ export function evaluateExpression(
   return false;
 }
 
-function calcScore(
-  tokenList: readonly ExpressionSearchToken[],
+// ── Vectorized Scoring ──────────────────────────────────────────
+
+/**
+ * Pre-encoded flag data as numpy-ts ndarrays for vectorized scoring.
+ * Caches boolean columns for each (flagName, flagValue) pair so
+ * expression evaluation can run across all flag sets simultaneously.
+ */
+interface VectorizedContext {
+  /** Boolean column per (flagName:flagValue) key, shape [N] */
+  readonly matchColumns: ReadonlyMap<string, NDArrayCore>;
+  /** Expected outcome per flag set, shape [N] */
+  readonly expectedOutcomes: NDArrayCore;
+  /** Total number of flag sets */
+  readonly numOutcomes: number;
+  /** Reusable all-false column */
+  readonly falseColumn: NDArrayCore;
+}
+
+function createVectorizedContext(
   flagOutcomes: readonly [boolean, ShaderFlags][],
-): number {
-  let score = 0;
-  for (const [outcome, flags] of flagOutcomes) {
-    if (evaluateExpression(tokenList, flags) === outcome) {
-      score++;
+  flagDefinition: FlagDefinition,
+): VectorizedContext {
+  const numOutcomes = flagOutcomes.length;
+
+  const expectedOutcomes = array(
+    flagOutcomes.map(([outcome]) => (outcome ? 1 : 0)),
+    "bool",
+  );
+
+  const falseColumn = zeros([numOutcomes], "bool");
+
+  // Pre-compute a boolean column for every (flagName, flagValue) pair
+  const matchColumns = new Map<string, NDArrayCore>();
+  for (const [flagName, flagValues] of Object.entries(flagDefinition)) {
+    for (const flagValue of flagValues) {
+      const key = `${flagName}:${flagValue}`;
+      const col = array(
+        flagOutcomes.map(([, flags]) => (flags[flagName] === flagValue ? 1 : 0)),
+        "bool",
+      );
+      matchColumns.set(key, col);
     }
   }
-  return score;
+
+  return { matchColumns, expectedOutcomes, numOutcomes, falseColumn };
+}
+
+/**
+ * Look up the boolean column for a token in the vectorized context.
+ * Applies negation when the token's isNegative flag is set.
+ */
+function getTokenColumn(
+  ctx: VectorizedContext,
+  token: ExpressionSearchToken,
+): NDArrayCore {
+  const key = `${token.flagName}:${token.flagValue}`;
+  const col = ctx.matchColumns.get(key) ?? ctx.falseColumn;
+  if (token.isNegative) return logical_not(col);
+  return col;
+}
+
+/**
+ * Extends a partial result ndarray with a new token using AND/OR.
+ */
+function extendResult(
+  partialResult: NDArrayCore | null,
+  token: ExpressionSearchToken,
+  tokenCol: NDArrayCore,
+): NDArrayCore {
+  if (partialResult === null) return tokenCol;
+  if (token.joinType === JoinType.And) return logical_and(partialResult, tokenCol);
+  return logical_or(partialResult, tokenCol);
+}
+
+/**
+ * Counts how many flag sets match their expected outcome when evaluated
+ * against the given result ndarray. Returns a scalar score.
+ */
+function vectorizedScore(ctx: VectorizedContext, result: NDArrayCore): number {
+  return sum(equal(result, ctx.expectedOutcomes)) as number;
 }
 
 // ── Fast Search ─────────────────────────────────────────────────
 
 /**
- * Greedy search: tests one token at a time, finding the configuration
- * that yields the highest score, then moves on. Linear complexity in
- * token sequence length but not guaranteed to find an exact solution.
+ * Greedy search using vectorized scoring via numpy-ts.
+ *
+ * Pre-encodes all flag comparisons as ndarray columns, then evaluates
+ * each candidate token by extending the partial result vector and
+ * counting matches — all N flag sets processed simultaneously per step.
  */
 function fastSearch(
   input: ExpressionSearchInput,
 ): ExpressionSearchOutput {
+  const ctx = createVectorizedContext(input.flags, input.flagDefinition);
+
   let bestExpression: ExpressionSearchToken[] = [];
   let bestExpressionScore = 0;
 
   const currentExpression: ExpressionSearchToken[] = [];
+  let partialResult: NDArrayCore | null = null;
+
   const maxIterations = Object.keys(input.flagDefinition).length + 5;
 
   for (let iter = 0; iter < maxIterations; iter++) {
@@ -121,8 +210,9 @@ function fastSearch(
               flagValue,
             };
 
-            const testExpr = [...currentExpression, candidate];
-            const score = calcScore(testExpr, input.flags);
+            const col = getTokenColumn(ctx, candidate);
+            const candidateResult = extendResult(partialResult, candidate, col);
+            const score = vectorizedScore(ctx, candidateResult);
 
             if (score > bestTokenScore) {
               bestTokenScore = score;
@@ -134,6 +224,10 @@ function fastSearch(
     }
 
     currentExpression.push(bestToken);
+
+    // Update partial result with the chosen best token
+    const bestCol = getTokenColumn(ctx, bestToken);
+    partialResult = extendResult(partialResult, bestToken, bestCol);
 
     if (bestTokenScore > bestExpressionScore) {
       bestExpressionScore = bestTokenScore;
@@ -216,12 +310,15 @@ interface MutableToken {
 
 /**
  * Brute-force search: checks every possible combination of tokens.
+ * Uses vectorized scoring via numpy-ts to evaluate all flag sets simultaneously.
  * Guaranteed to find the exact solution given enough time.
  */
 function slowSearch(
   input: ExpressionSearchInput,
   timeout: number = 10_000,
 ): ExpressionSearchOutput {
+  const ctx = createVectorizedContext(input.flags, input.flagDefinition);
+
   let bestExpression: ExpressionSearchToken[] = [];
   let bestExpressionScore = 0;
 
@@ -229,7 +326,16 @@ function slowSearch(
   const startTime = performance.now();
 
   while (true) {
-    const score = calcScore(currentExpression, input.flags);
+    let score = 0;
+    if (currentExpression.length > 0) {
+      const firstToken = currentExpression[0]!;
+      let result = getTokenColumn(ctx, firstToken);
+      for (let i = 1; i < currentExpression.length; i++) {
+        const token = currentExpression[i]!;
+        result = extendResult(result, token, getTokenColumn(ctx, token));
+      }
+      score = vectorizedScore(ctx, result);
+    }
 
     if (score > bestExpressionScore) {
       bestExpressionScore = score;
