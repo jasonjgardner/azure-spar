@@ -12,9 +12,12 @@ ENV PATH="/opt/dxc/bin:$PATH"
 # ── Install tigrisfs for R2 FUSE mount ────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     fuse3 ca-certificates curl && \
-    curl -fsSL -o /usr/local/bin/tigrisfs \
-    https://github.com/tigrisdata/tigrisfs/releases/latest/download/tigrisfs-linux-amd64 && \
+    curl -fsSL -L -o /tmp/tigrisfs.tar.gz \
+    https://github.com/tigrisdata/tigrisfs/releases/latest/download/tigrisfs_1.2.1_linux_amd64.tar.gz && \
+    tar -xzf /tmp/tigrisfs.tar.gz -C /tmp && \
+    mv /tmp/tigrisfs /usr/local/bin/tigrisfs && \
     chmod +x /usr/local/bin/tigrisfs && \
+    rm -rf /tmp/tigrisfs* && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/src/app
