@@ -86,6 +86,7 @@ async function executeBuild(
       registerDefines,
       userDefines,
       includePaths,
+      shaderSources: shaderData.shaderFiles,
     });
 
     const fileName =

@@ -19,6 +19,37 @@ export type { MaterialDefinition, CompiledShader, PassDefinition } from "./mater
 export { buildMaterial } from "./material-builder.ts";
 export { wrapDxilAsBgfxShader, type WrapDxilOptions } from "./bgfx-wrapper.ts";
 
+// ── Source Resolution ──────────────────────────────────────────
+
+/**
+ * Resolve shader sources for a manifest from a pre-loaded map.
+ *
+ * The map may use keys with or without the material prefix
+ * (e.g. "RTXPostFX.Bloom/shaders/Foo.hlsl" or "shaders/Foo.hlsl").
+ * Tries the manifest's fileName directly first.
+ */
+function resolveSourcesFromMap(
+  manifest: MaterialManifest,
+  sourceMap: ReadonlyMap<string, Uint8Array>,
+): ReadonlyMap<string, Uint8Array> {
+  const resolved = new Map<string, Uint8Array>();
+
+  for (const shader of manifest.shaders) {
+    const source = sourceMap.get(shader.fileName);
+    if (source) {
+      resolved.set(shader.fileName, source);
+      continue;
+    }
+
+    throw new Error(
+      `Source not found in shaderSources map for "${shader.fileName}". ` +
+        `Available keys: ${[...sourceMap.keys()].join(", ")}`,
+    );
+  }
+
+  return resolved;
+}
+
 /** Options for the full compilation pipeline. */
 export interface CompileMaterialOptions {
   /** Direct3D shader model platform to target. Defaults to SM65. */
@@ -33,6 +64,12 @@ export interface CompileMaterialOptions {
   readonly includePaths?: readonly string[];
   /** User-provided shader setting overrides (lowest priority defines). */
   readonly userDefines?: Readonly<Record<string, string>>;
+  /**
+   * Pre-loaded shader sources keyed by relative path.
+   * When provided, bypasses embedded-file / dev-mode filesystem lookup.
+   * Used by the server build pipeline where shaders are loaded from R2.
+   */
+  readonly shaderSources?: ReadonlyMap<string, Uint8Array>;
 }
 
 /** Result of the full compilation pipeline. */
@@ -55,8 +92,10 @@ export async function compileMaterial(
   const platform = options?.platform ?? ShaderPlatform.Direct3D_SM65;
   const dxc = await createDxcCompiler(options?.dxcPath);
 
-  // Load all shader sources from embedded files
-  const sources = await loadManifestSources(manifest);
+  // Use pre-loaded sources if provided, otherwise load from embedded/dev filesystem
+  const sources = options?.shaderSources
+    ? resolveSourcesFromMap(manifest, options.shaderSources)
+    : await loadManifestSources(manifest);
 
   // Compile each shader entry
   const compiledShaders: CompiledShader[] = [];
