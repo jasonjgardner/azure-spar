@@ -4,7 +4,7 @@
  * Pipeline: embedded HLSL → DXC compile → BgfxShader wrap → Material build → .material.bin
  */
 
-import { getDxcCompiler, type DxcCompileOptions } from "../dxc/mod.ts";
+import { createDxcCompiler, type DxcCompileOptions, type UnifiedDxcCompiler } from "../dxc/mod.ts";
 import { loadManifestSources, type MaterialManifest } from "../betterrtx/mod.ts";
 import { wrapDxilAsBgfxShader } from "./bgfx-wrapper.ts";
 import {
@@ -53,7 +53,7 @@ export async function compileMaterial(
   options?: CompileMaterialOptions,
 ): Promise<CompileMaterialResult> {
   const platform = options?.platform ?? ShaderPlatform.Direct3D_SM65;
-  const dxc = getDxcCompiler(options?.dxcPath);
+  const dxc = await createDxcCompiler(options?.dxcPath);
 
   // Load all shader sources from embedded files
   const sources = await loadManifestSources(manifest);
@@ -90,7 +90,7 @@ export async function compileMaterial(
       includePaths: options?.includePaths,
     };
 
-    const result = dxc.compile(compileOptions);
+    const result = await dxc.compile(compileOptions);
 
     if (!result.success) {
       throw new Error(

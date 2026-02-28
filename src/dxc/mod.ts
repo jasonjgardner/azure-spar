@@ -1,10 +1,15 @@
 /**
- * DXC (DirectX Shader Compiler) FFI bindings for Bun.
+ * DXC (DirectX Shader Compiler) bindings for Bun.
  *
- * Compiles HLSL source code to DXIL bytecode in-memory using dxcompiler.dll.
- * Uses pure bun:ffi with COM vtable walking — no external build tools required.
+ * Compiles HLSL source code to DXIL bytecode in-memory.
  *
- * Windows x64 only (COM vtable calls rely on the unified Microsoft x64 ABI).
+ * Platform support:
+ * - Windows x64: Uses COM vtable walking via bun:ffi (synchronous, fast)
+ * - Linux/macOS: Falls back to CLI subprocess via `dxc` binary (async)
+ *
+ * Use the unified async API (`createDxcCompiler`, `compileHLSLAsync`) for
+ * cross-platform code. The sync API (`DxcCompiler`, `compileHLSL`) is
+ * Windows-only.
  */
 
 import { dlopen, ptr, toArrayBuffer, type Library, type Pointer } from "bun:ffi";
@@ -28,10 +33,21 @@ import {
 } from "./types.ts";
 import { buildWideStringArray } from "./wide-string.ts";
 import { DxcCompilationError, DxcLoadError } from "./errors.ts";
+import { DxcCompilerCli, getDxcCompilerCli, disposeDxcCompilerCli } from "./cli.ts";
 
 export type { DxcCompileOptions, DxcCompileResult } from "./types.ts";
 export { DxcOutKind, isHResultSuccess, formatHResult } from "./types.ts";
 export { DxcError, DxcLoadError, DxcCompilationError } from "./errors.ts";
+export { DxcCompilerCli } from "./cli.ts";
+
+// ── Platform detection ─────────────────────────────────────────────
+
+const IS_WINDOWS = process.platform === "win32";
+
+/** Returns true if the current platform supports the FFI-based compiler. */
+export function supportsFfiCompiler(): boolean {
+  return IS_WINDOWS;
+}
 
 // ── DLL search ─────────────────────────────────────────────────────
 
@@ -386,12 +402,21 @@ export class DxcCompiler {
   }
 }
 
-// ── Singleton access ──────────────────────────────────────────────
+// ── Singleton access (Windows FFI) ────────────────────────────────
 
 let _instance: DxcCompiler | null = null;
 
-/** Get or create a singleton DxcCompiler instance. */
+/**
+ * Get or create a singleton DxcCompiler instance.
+ * @throws {DxcLoadError} On non-Windows platforms or if DLL not found.
+ */
 export function getDxcCompiler(dllPath?: string): DxcCompiler {
+  if (!IS_WINDOWS) {
+    throw new DxcLoadError(
+      "dxcompiler.dll",
+      "FFI-based DxcCompiler is only available on Windows. Use createDxcCompiler() for cross-platform support.",
+    );
+  }
   if (_instance) return _instance;
   _instance = new DxcCompiler(dllPath);
   return _instance;
@@ -403,10 +428,11 @@ export function disposeDxcCompiler(): void {
   _instance = null;
 }
 
-// ── Convenience function ──────────────────────────────────────────
+// ── Convenience function (Windows FFI) ────────────────────────────
 
 /**
  * Compile HLSL source to DXIL bytecode. Throws on failure.
+ * **Windows-only** — use `compileHLSLAsync` for cross-platform.
  *
  * Source stays entirely in-memory — never touches disk.
  */
@@ -416,6 +442,84 @@ export function compileHLSL(
 ): Uint8Array {
   const compiler = getDxcCompiler();
   const result = compiler.compile({ ...options, source });
+  if (!result.success) {
+    throw new DxcCompilationError(result.errors);
+  }
+  return result.objectBytes;
+}
+
+// ── Cross-platform async API ──────────────────────────────────────
+
+/** Unified compiler interface for cross-platform code. */
+export interface UnifiedDxcCompiler {
+  compile(options: DxcCompileOptions): Promise<DxcCompileResult>;
+  dispose(): void;
+}
+
+/** Wraps the sync Windows FFI compiler in the async interface. */
+class FfiCompilerWrapper implements UnifiedDxcCompiler {
+  private readonly _inner: DxcCompiler;
+
+  constructor(dllPath?: string) {
+    this._inner = new DxcCompiler(dllPath);
+  }
+
+  async compile(options: DxcCompileOptions): Promise<DxcCompileResult> {
+    return this._inner.compile(options);
+  }
+
+  dispose(): void {
+    this._inner.dispose();
+  }
+}
+
+let _unifiedInstance: UnifiedDxcCompiler | null = null;
+
+/**
+ * Create a cross-platform DXC compiler instance.
+ *
+ * - Windows: Uses FFI-based COM interface (fast, in-memory)
+ * - Linux/macOS: Uses CLI subprocess with temp files
+ *
+ * @param dxcPath Path to dxcompiler.dll (Windows) or dxc binary (Linux)
+ */
+export async function createDxcCompiler(dxcPath?: string): Promise<UnifiedDxcCompiler> {
+  if (_unifiedInstance) return _unifiedInstance;
+
+  if (IS_WINDOWS) {
+    _unifiedInstance = new FfiCompilerWrapper(dxcPath);
+  } else {
+    _unifiedInstance = await getDxcCompilerCli(dxcPath);
+  }
+
+  return _unifiedInstance;
+}
+
+/** Dispose the unified singleton compiler instance. */
+export function disposeUnifiedCompiler(): void {
+  _unifiedInstance?.dispose();
+  _unifiedInstance = null;
+
+  // Also dispose platform-specific singletons
+  if (IS_WINDOWS) {
+    disposeDxcCompiler();
+  } else {
+    disposeDxcCompilerCli();
+  }
+}
+
+/**
+ * Compile HLSL source to DXIL bytecode (cross-platform). Throws on failure.
+ *
+ * @param source HLSL source as UTF-8 bytes
+ * @param options Compiler options (entryPoint, targetProfile, defines, etc.)
+ */
+export async function compileHLSLAsync(
+  source: Uint8Array,
+  options: Omit<DxcCompileOptions, "source">,
+): Promise<Uint8Array> {
+  const compiler = await createDxcCompiler();
+  const result = await compiler.compile({ ...options, source });
   if (!result.success) {
     throw new DxcCompilationError(result.errors);
   }

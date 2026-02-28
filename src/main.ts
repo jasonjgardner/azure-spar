@@ -17,7 +17,7 @@ import {
 } from "./betterrtx/mod.ts";
 import { loadSettingsFile, settingsToDefines } from "./betterrtx/settings.ts";
 import { compileMaterial } from "./compiler/mod.ts";
-import { disposeDxcCompiler } from "./dxc/mod.ts";
+import { disposeUnifiedCompiler } from "./dxc/mod.ts";
 import type { MaterialManifest } from "./betterrtx/manifest-types.ts";
 import type { SettingsDefines } from "./betterrtx/settings.ts";
 
@@ -140,7 +140,7 @@ async function main(): Promise<void> {
   }
 
   // Cleanup
-  disposeDxcCompiler();
+  disposeUnifiedCompiler();
 
   console.log(`\n=== ${passed} compiled, ${failed} failed ===`);
   if (failed > 0) process.exit(1);

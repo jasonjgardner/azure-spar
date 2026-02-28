@@ -1,0 +1,42 @@
+# Dependencies - installed in container
+node_modules/
+bun.lock
+
+# Build artifacts
+*.exe
+*.dll
+mod.exe
+brtxbuilder.exe
+
+# SQLite databases (mounted as volume)
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Git
+.git/
+.gitignore
+
+# IDE/Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Development files
+.claude/
+.github/
+scripts/
+test-*.ts
+llms*.txt
+settings.example.json
+
+# Shader sources - mounted as volume, not baked in
+shaders/
+shader_source.tar.gz
+materials-backup/

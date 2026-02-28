@@ -94,16 +94,25 @@ export {
 
 // ── DXC Compiler ───────────────────────────────────────────────
 export {
+  // Windows FFI-based (sync)
   DxcCompiler,
   getDxcCompiler,
   disposeDxcCompiler,
   compileHLSL,
+  // Cross-platform (async) — use these for portable code
+  DxcCompilerCli,
+  createDxcCompiler,
+  disposeUnifiedCompiler,
+  compileHLSLAsync,
+  supportsFfiCompiler,
+  // Errors and types
   DxcError,
   DxcLoadError,
   DxcCompilationError,
   DxcOutKind,
   type DxcCompileOptions,
   type DxcCompileResult,
+  type UnifiedDxcCompiler,
 } from "./dxc/mod.ts";
 
 // ── BetterRTX Shader Embedding ─────────────────────────────────

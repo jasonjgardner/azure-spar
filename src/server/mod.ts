@@ -22,7 +22,7 @@ import {
   createFetchHandler,
   type RouteContext,
 } from "./routes.ts";
-import { disposeDxcCompiler } from "../dxc/mod.ts";
+import { disposeUnifiedCompiler } from "../dxc/mod.ts";
 import { resetShaderCache } from "./shader-cache.ts";
 import {
   createMcpSessionManager,
@@ -169,6 +169,6 @@ export async function disposeServer(): Promise<void> {
     _db = null;
   }
 
-  disposeDxcCompiler();
+  disposeUnifiedCompiler();
   await resetShaderCache();
 }

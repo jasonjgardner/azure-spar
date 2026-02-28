@@ -1,0 +1,33 @@
+version: "3.8"
+
+services:
+  azure-spar:
+    image: azure-spar:latest
+    container_name: azure-spar
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        CORS_ORIGIN: "*"
+    ports:
+      - "3000:3000"
+    volumes:
+      - builds-data:/data
+      - shaders-volume:/shaders
+    environment:
+      - CORS_ORIGIN=*
+      - SHADERS_PATH=/shaders
+      - DB_PATH=/data/builds.sqlite
+    restart: unless-stopped
+    develop:
+      watch:
+        - path: "./src"
+          action: rebuild
+        - path: "./package.json"
+          action: rebuild
+
+volumes:
+  builds-data:
+    driver: local
+  shaders-volume:
+    driver: local
