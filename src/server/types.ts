@@ -34,6 +34,8 @@ export interface ShaderData {
   >;
   readonly shaderFiles: ReadonlyMap<string, Uint8Array>;
   readonly tempShadersRoot: string;
+  /** Vanilla .material.bin bytes keyed by material name (e.g. "RTXStub"). */
+  readonly vanillaMaterials: Readonly<Record<string, Uint8Array>>;
 }
 
 /** A single compiled material output. */

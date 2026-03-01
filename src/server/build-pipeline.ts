@@ -87,6 +87,7 @@ async function executeBuild(
       userDefines,
       includePaths,
       shaderSources: shaderData.shaderFiles,
+      baseMaterial: shaderData.vanillaMaterials[manifest.materialName],
     });
 
     const fileName =

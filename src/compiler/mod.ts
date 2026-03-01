@@ -2,18 +2,29 @@
  * Shader compilation orchestrator.
  *
  * Pipeline: embedded HLSL → DXC compile → BgfxShader wrap → Material build → .material.bin
+ *
+ * When a base material is provided (the vanilla .material.bin), compiled
+ * shaders are merged into the existing pass structure — preserving version,
+ * encryption, buffers, uniforms, parent info, and per-pass metadata.
+ * This is the correct path for BetterRTX materials.
+ *
+ * Without a base material the compiler falls back to building a minimal
+ * material from scratch (useful for tests but not loadable in-game).
  */
 
-import { createDxcCompiler, type DxcCompileOptions, type UnifiedDxcCompiler } from "../dxc/mod.ts";
-import { loadManifestSources, type MaterialManifest } from "../betterrtx/mod.ts";
+import { createDxcCompiler, type DxcCompileOptions } from "../dxc/mod.ts";
+import { loadManifestSources, type MaterialManifest, type ShaderEntry } from "../betterrtx/mod.ts";
 import { wrapDxilAsBgfxShader } from "./bgfx-wrapper.ts";
 import {
   buildMaterial,
   type CompiledShader,
   type MaterialDefinition,
 } from "./material-builder.ts";
-import { writeMaterial, type Material } from "../material/material.ts";
+import { readMaterial, writeMaterial, type Material } from "../material/material.ts";
 import { ShaderPlatform } from "../material/enums.ts";
+import type { Pass } from "../material/pass.ts";
+import type { Variant } from "../material/variant.ts";
+import type { ShaderDefinition } from "../material/shader-definition.ts";
 
 export type { MaterialDefinition, CompiledShader, PassDefinition } from "./material-builder.ts";
 export { buildMaterial } from "./material-builder.ts";
@@ -70,6 +81,13 @@ export interface CompileMaterialOptions {
    * Used by the server build pipeline where shaders are loaded from R2.
    */
   readonly shaderSources?: ReadonlyMap<string, Uint8Array>;
+  /**
+   * Vanilla .material.bin bytes to use as base for merging.
+   * Compiled shaders replace matching passes in this base material,
+   * preserving all metadata (version, encryption, buffers, uniforms, etc.).
+   * Required for producing in-game-loadable materials.
+   */
+  readonly baseMaterial?: Uint8Array;
 }
 
 /** Result of the full compilation pipeline. */
@@ -81,7 +99,10 @@ export interface CompileMaterialResult {
 }
 
 /**
- * Full pipeline: load embedded HLSL → compile via DXC → wrap → build material → serialize.
+ * Full pipeline: load embedded HLSL → compile via DXC → wrap → merge into base or build → serialize.
+ *
+ * When `options.baseMaterial` is provided the compiled shaders are merged into
+ * the vanilla material structure (correct for in-game loading).
  *
  * Shader source stays entirely in-memory throughout the pipeline.
  */
@@ -97,8 +118,10 @@ export async function compileMaterial(
     ? resolveSourcesFromMap(manifest, options.shaderSources)
     : await loadManifestSources(manifest);
 
-  // Compile each shader entry
-  const compiledShaders: CompiledShader[] = [];
+  // Compile each shader entry → store raw DXIL bytes keyed by pass name.
+  // The merge path replaces only shaderBytes inside the vanilla BgfxShader,
+  // preserving all metadata (hash, uniforms, size, attributes).
+  const compiledByPass = new Map<string, { readonly stage: number; readonly dxilBytes: Uint8Array }>();
 
   for (const shaderEntry of manifest.shaders) {
     const source = sources.get(shaderEntry.fileName);
@@ -137,19 +160,32 @@ export async function compileMaterial(
       );
     }
 
-    const bgfxShader = wrapDxilAsBgfxShader({
-      dxilBytes: result.objectBytes,
-    });
+    const passName = extractPassName(manifest.materialName, shaderEntry);
+    compiledByPass.set(passName, { stage: shaderEntry.stage, dxilBytes: result.objectBytes });
+  }
 
+  // Merge into base material when provided — otherwise build from scratch
+  if (options?.baseMaterial) {
+    const base = await readMaterial(options.baseMaterial);
+    const material = mergeCompiledShaders(base, compiledByPass, platform);
+    const binary = await writeMaterial(material);
+    return { material, binary };
+  }
+
+  // Fallback: build a minimal material from scratch (not loadable in-game)
+  const compiledShaders: CompiledShader[] = [];
+  for (const shaderEntry of manifest.shaders) {
+    const passName = extractPassName(manifest.materialName, shaderEntry);
+    const compiled = compiledByPass.get(passName);
+    if (!compiled) continue;
     compiledShaders.push({
       stage: shaderEntry.stage,
       platform,
-      bgfxShader,
+      bgfxShader: wrapDxilAsBgfxShader({ dxilBytes: compiled.dxilBytes }),
       inputs: [],
     });
   }
 
-  // Build the material structure
   const materialDef: MaterialDefinition = {
     name: manifest.materialName,
     passes: [
@@ -164,4 +200,82 @@ export async function compileMaterial(
   const binary = await writeMaterial(material);
 
   return { material, binary };
+}
+
+// ── Pass Name Extraction ───────────────────────────────────────
+
+/**
+ * Derive the vanilla pass name from a shader entry.
+ *
+ * Manifest shader names follow the pattern "MaterialName.PassName"
+ * (e.g. "RTXStub.BlurGradients" → "BlurGradients",
+ *       "RTXPostFX.Bloom.BloomUpscalePass" → "BloomUpscalePass").
+ */
+function extractPassName(materialName: string, entry: ShaderEntry): string {
+  const prefix = `${materialName}.`;
+  if (entry.name.startsWith(prefix)) {
+    return entry.name.slice(prefix.length);
+  }
+  return entry.name;
+}
+
+// ── Merge Logic ────────────────────────────────────────────────
+
+/**
+ * Merge compiled shaders into a base (vanilla) material.
+ *
+ * Mirrors lazurite's approach:
+ * 1. Filter each variant's shaders to only the target platform (SM65).
+ *    This removes SM40/SM50/SM60 stubs — exactly like lazurite's
+ *    `material.remove_platforms(...)` call.
+ * 2. For passes that have a compiled shader, replace only the
+ *    `shaderBytes` field of the matching SM65 ShaderDefinition.
+ *    All metadata (hash, uniforms, attributes, size, groupSize) is
+ *    preserved from the vanilla material.
+ * 3. Uncompiled SM65 shader definitions (e.g. Vertex stubs for
+ *    RTXPostFX fragment-only passes) are kept unchanged.
+ * 4. Empty shaders (zero-length shaderBytes) are filtered out —
+ *    matching lazurite's post-compilation cleanup.
+ */
+function mergeCompiledShaders(
+  base: Material,
+  compiledByPass: ReadonlyMap<string, { readonly stage: number; readonly dxilBytes: Uint8Array }>,
+  platform: ShaderPlatform,
+): Material {
+  const newPasses: Pass[] = base.passes.map((pass) => {
+    const compiled = compiledByPass.get(pass.name);
+
+    const newVariants: Variant[] = pass.variants.map((variant) => {
+      // Step 1: Keep only target-platform shader definitions
+      const sm65Shaders = variant.shaders.filter(
+        (s) => s.platform === platform,
+      );
+
+      // Step 2: Replace shaderBytes for the compiled stage
+      const updatedShaders: ShaderDefinition[] = sm65Shaders.map((shader) => {
+        if (!compiled) return shader;
+        if (shader.stage !== compiled.stage) return shader;
+
+        // Replace only the DXIL bytes — preserve all BgfxShader metadata
+        return {
+          ...shader,
+          bgfxShader: {
+            ...shader.bgfxShader,
+            shaderBytes: compiled.dxilBytes,
+          },
+        };
+      });
+
+      // Step 3: Filter out empty shaders (matches lazurite's cleanup)
+      const nonEmpty = updatedShaders.filter(
+        (s) => s.bgfxShader.shaderBytes.length > 0,
+      );
+
+      return { ...variant, shaders: nonEmpty };
+    });
+
+    return { ...pass, variants: newVariants };
+  });
+
+  return { ...base, passes: newPasses };
 }

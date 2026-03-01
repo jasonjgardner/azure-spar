@@ -25,6 +25,7 @@ import type { SettingsDefines } from "./betterrtx/settings.ts";
 
 const PROJECT_ROOT = resolve(import.meta.dir, "..");
 const SHADERS_DIR = resolve(PROJECT_ROOT, "shaders");
+const BACKUP_DIR = resolve(PROJECT_ROOT, "materials-backup");
 const DEFAULT_OUTPUT = resolve(PROJECT_ROOT, "output");
 
 // ── CLI ──────────────────────────────────────────────────────────
@@ -56,6 +57,19 @@ async function loadUserSettings(): Promise<SettingsDefines> {
   return defines;
 }
 
+/**
+ * Load vanilla .material.bin bytes from the backup directory.
+ * Returns undefined if the file does not exist.
+ */
+async function loadBaseMaterial(
+  materialName: string,
+): Promise<Uint8Array | undefined> {
+  const path = resolve(BACKUP_DIR, `${materialName}.material.bin`);
+  const file = Bun.file(path);
+  if (!(await file.exists())) return undefined;
+  return new Uint8Array(await file.arrayBuffer());
+}
+
 async function compileAndWrite(
   manifest: MaterialManifest,
   registerDefines: Readonly<Record<string, string>>,
@@ -64,11 +78,19 @@ async function compileAndWrite(
   dxcPath?: string,
 ): Promise<boolean> {
   try {
+    const baseMaterial = await loadBaseMaterial(manifest.materialName);
+    if (!baseMaterial) {
+      console.warn(
+        `  ${manifest.materialName}: no vanilla base found in materials-backup/ — building from scratch`,
+      );
+    }
+
     const { binary } = await compileMaterial(manifest, {
       dxcPath,
       registerDefines,
       userDefines,
       includePaths: includePathsForMaterial(manifest.materialName),
+      baseMaterial,
     });
 
     const outPath = resolve(

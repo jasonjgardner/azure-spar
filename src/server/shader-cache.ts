@@ -174,13 +174,17 @@ async function loadShaderDataFromDirectory(
     await Bun.write(outPath, content);
   }
 
+  // 5. Load vanilla .material.bin files for merge-based compilation
+  const vanillaMaterials = await loadVanillaMaterials(shadersVolume);
+
   console.log(
     `[Server] Directory mode: loaded ${manifests.length} manifests, ` +
       `${shaderFiles.size} shader files, ` +
-      `${Object.keys(registerBindings).length} register binding sets`,
+      `${Object.keys(registerBindings).length} register binding sets, ` +
+      `${Object.keys(vanillaMaterials).length} vanilla materials`,
   );
 
-  return { manifests, registerBindings, shaderFiles, tempShadersRoot };
+  return { manifests, registerBindings, shaderFiles, tempShadersRoot, vanillaMaterials };
 }
 
 // ── Archive Mode ────────────────────────────────────────────────
@@ -272,12 +276,43 @@ async function loadShaderDataFromVolume(
     await Bun.write(outPath, content);
   }
 
+  // 6. Load vanilla .material.bin files for merge-based compilation
+  const vanillaMaterials = await loadVanillaMaterials(shadersVolume);
+
   console.log(
     `[Server] Loaded ${manifests.length} manifests, ${shaderFiles.size} shader files, ` +
-      `${Object.keys(registerBindings).length} register binding sets`,
+      `${Object.keys(registerBindings).length} register binding sets, ` +
+      `${Object.keys(vanillaMaterials).length} vanilla materials`,
   );
 
-  return { manifests, registerBindings, shaderFiles, tempShadersRoot };
+  return { manifests, registerBindings, shaderFiles, tempShadersRoot, vanillaMaterials };
+}
+
+// ── Vanilla Material Loading ────────────────────────────────────
+
+/**
+ * Load vanilla .material.bin files from the vanilla/ subdirectory.
+ * These are used as merge bases for compilation.
+ */
+async function loadVanillaMaterials(
+  shadersVolume: string,
+): Promise<Readonly<Record<string, Uint8Array>>> {
+  const vanillaDir = resolve(shadersVolume, "vanilla");
+  const materials: Record<string, Uint8Array> = {};
+
+  for (const name of TARGET_MATERIALS) {
+    const path = resolve(vanillaDir, `${name}.material.bin`);
+    const file = Bun.file(path);
+    if (!(await file.exists())) continue;
+
+    try {
+      materials[name] = new Uint8Array(await file.arrayBuffer());
+    } catch (err) {
+      console.warn(`[Server] Failed to load vanilla material ${name}: ${err}`);
+    }
+  }
+
+  return materials;
 }
 
 /**
