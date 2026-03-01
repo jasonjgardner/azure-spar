@@ -72,10 +72,17 @@ export function createQueueWorker(
       const merged = mergeSettings(defaults, parsed);
       const userDefines = settingsToDefines(merged);
 
-      const shaderData = await loadShaderData(
-        config.shadersVolume,
-        config.archivePrefix,
-      );
+      // Shader data loading has no internal timeout — guard against
+      // FUSE mount hangs with a 60-second deadline on first load.
+      const shaderData = await Promise.race([
+        loadShaderData(config.shadersVolume, config.archivePrefix),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("Shader data loading timed out (60s)")),
+            60_000,
+          ),
+        ),
+      ]);
 
       const result = await buildAllMaterials(
         shaderData,

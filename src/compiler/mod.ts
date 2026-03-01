@@ -88,6 +88,11 @@ export interface CompileMaterialOptions {
    * Required for producing in-game-loadable materials.
    */
   readonly baseMaterial?: Uint8Array;
+  /**
+   * Abort signal for cancelling compilation between shader compilations.
+   * Checked before each individual DXC compile call.
+   */
+  readonly signal?: AbortSignal;
 }
 
 /** Result of the full compilation pipeline. */
@@ -124,6 +129,10 @@ export async function compileMaterial(
   const compiledByPass = new Map<string, { readonly stage: number; readonly dxilBytes: Uint8Array }>();
 
   for (const shaderEntry of manifest.shaders) {
+    if (options?.signal?.aborted) {
+      throw new Error("Compilation aborted");
+    }
+
     const source = sources.get(shaderEntry.fileName);
     if (!source) {
       throw new Error(`Source not found for shader: ${shaderEntry.fileName}`);

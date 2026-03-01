@@ -88,6 +88,7 @@ async function executeBuild(
       includePaths,
       shaderSources: shaderData.shaderFiles,
       baseMaterial: shaderData.vanillaMaterials[manifest.materialName],
+      signal,
     });
 
     const fileName =
@@ -103,6 +104,11 @@ async function executeBuild(
     console.log(
       `[Build ${manifest.materialName}] ${manifest.shaders.length} shaders -> ${binary.length} bytes`,
     );
+  }
+
+  // Final abort check — catches timeout during the last manifest.
+  if (signal.aborted) {
+    throw new BuildTimeoutError(0);
   }
 
   return materials;

@@ -64,7 +64,7 @@ let _mcpSessions: McpSessionManager | null = null;
 const DEFAULT_CONFIG: ServerConfig = {
   port: 3000,
   corsOrigin: process.env["CORS_ORIGIN"] ?? "http://localhost:3000",
-  buildTimeoutMs: 120_000,
+  buildTimeoutMs: 600_000,
   maxCacheEntries: 50,
   shadersVolume: process.env["SHADERS_PATH"] ?? "/shaders",
   archivePrefix: "shader_source/",
