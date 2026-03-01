@@ -27,3 +27,20 @@ export async function createMaterialArchive(
   const archive = new Bun.Archive(files, { compress: "gzip" });
   return await archive.bytes();
 }
+
+/**
+ * Generate a tar.gz archive on-demand from a materials map.
+ * Used by the archive download endpoint when materials are stored individually.
+ */
+export async function createArchiveFromMap(
+  materials: ReadonlyMap<string, Uint8Array>,
+): Promise<Uint8Array> {
+  const files: Record<string, Uint8Array> = {};
+
+  for (const [fileName, data] of materials) {
+    files[fileName] = data;
+  }
+
+  const archive = new Bun.Archive(files, { compress: "gzip" });
+  return await archive.bytes();
+}

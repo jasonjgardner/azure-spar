@@ -17,7 +17,6 @@ import { parseSettingsJson, settingsToDefines } from "../betterrtx/settings.ts";
 import { mergeSettings } from "./settings.ts";
 import { loadShaderData } from "./shader-cache.ts";
 import { buildAllMaterials } from "./build-pipeline.ts";
-import { createMaterialArchive } from "./archive.ts";
 
 /** Queue worker control interface. */
 export interface QueueWorker {
@@ -85,15 +84,18 @@ export function createQueueWorker(
         { dxcPath: config.dxcPath, timeoutMs: config.buildTimeoutMs },
       );
 
-      const archiveBytes = await createMaterialArchive(result.materials);
+      const materialsMap = new Map(
+        result.materials.map((m) => [m.fileName, m.binary] as const),
+      );
+      const totalSize = result.materials.reduce((sum, m) => sum + m.binary.length, 0);
 
-      db.completeBuild(job.id, archiveBytes, result.materials.length);
-      archiveCache.set(job.id, { archive: archiveBytes });
+      db.completeBuild(job.id, materialsMap);
+      archiveCache.set(job.id, { materials: materialsMap });
       db.evictOldBuilds(config.maxDbBuilds);
 
       console.log(
         `[Queue] Completed ${job.id} (${result.materials.length} materials, ` +
-          `${archiveBytes.length} bytes, ${result.elapsedMs.toFixed(0)}ms)`,
+          `${totalSize} bytes, ${result.elapsedMs.toFixed(0)}ms)`,
       );
 
       publish(job.id, {
@@ -102,7 +104,7 @@ export function createQueueWorker(
         status: "completed",
         settingsHash: job.settingsHash,
         materialCount: result.materials.length,
-        archiveSize: archiveBytes.length,
+        archiveSize: totalSize,
         elapsedMs: result.elapsedMs,
       });
     } catch (err) {

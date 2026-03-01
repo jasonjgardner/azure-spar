@@ -39,11 +39,11 @@ export interface BuildDatabase {
   readonly claimNextPending: () => BuildJob | null;
   readonly completeBuild: (
     id: string,
-    archive: Uint8Array,
-    materialCount: number,
+    materials: ReadonlyMap<string, Uint8Array>,
   ) => void;
   readonly failBuild: (id: string, error: string) => void;
-  readonly getArchive: (id: string) => Uint8Array | null;
+  readonly getMaterial: (id: string, fileName: string) => Uint8Array | null;
+  readonly getAllMaterials: (id: string) => ReadonlyMap<string, Uint8Array> | null;
   readonly listBuilds: (limit: number, offset: number) => readonly BuildJob[];
   readonly countTotal: () => number;
   readonly countByStatus: (status: BuildStatus) => number;
@@ -85,6 +85,7 @@ export function createDatabase(dbPath: string): BuildDatabase {
 
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA synchronous = NORMAL");
+  db.exec("PRAGMA foreign_keys = ON");
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS builds (
@@ -99,6 +100,16 @@ export function createDatabase(dbPath: string): BuildDatabase {
       completed_at INTEGER,
       material_count INTEGER,
       archive_size INTEGER
+    )
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS build_materials (
+      build_id TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      data BLOB NOT NULL,
+      PRIMARY KEY (build_id, file_name),
+      FOREIGN KEY (build_id) REFERENCES builds(id) ON DELETE CASCADE
     )
   `);
 
@@ -146,20 +157,28 @@ export function createDatabase(dbPath: string): BuildDatabase {
                created_at, started_at, completed_at, material_count, archive_size`,
   );
 
-  const stmtComplete = db.prepare<void, [Uint8Array, number, number, number, string]>(
+  const stmtComplete = db.prepare<void, [number, number, number, string]>(
     `UPDATE builds
-     SET status = 'completed', archive = ?, completed_at = ?,
+     SET status = 'completed', archive = NULL, completed_at = ?,
          material_count = ?, archive_size = ?
      WHERE id = ?`,
+  );
+
+  const stmtStoreMaterial = db.prepare<void, [string, string, Uint8Array]>(
+    `INSERT INTO build_materials (build_id, file_name, data) VALUES (?, ?, ?)`,
+  );
+
+  const stmtGetMaterial = db.prepare<{ data: Uint8Array }, [string, string]>(
+    `SELECT data FROM build_materials WHERE build_id = ? AND file_name = ?`,
+  );
+
+  const stmtGetAllMaterials = db.prepare<{ file_name: string; data: Uint8Array }, [string]>(
+    `SELECT file_name, data FROM build_materials WHERE build_id = ?`,
   );
 
   const stmtFail = db.prepare<void, [string, number, string]>(
     `UPDATE builds SET status = 'failed', error = ?, completed_at = ?
      WHERE id = ?`,
-  );
-
-  const stmtGetArchive = db.prepare<{ archive: Uint8Array | null }, [string]>(
-    "SELECT archive FROM builds WHERE id = ? AND status = 'completed'",
   );
 
   const stmtList = db.prepare<BuildRow, [number, number]>(
@@ -198,6 +217,17 @@ export function createDatabase(dbPath: string): BuildDatabase {
     },
   );
 
+  // Atomic complete: update status + store all materials in one transaction
+  const txCompleteBuild = db.transaction(
+    (id: string, materials: ReadonlyMap<string, Uint8Array>) => {
+      const totalSize = [...materials.values()].reduce((sum, buf) => sum + buf.length, 0);
+      stmtComplete.run(Date.now(), materials.size, totalSize, id);
+      for (const [fileName, data] of materials) {
+        stmtStoreMaterial.run(id, fileName, data);
+      }
+    },
+  );
+
   return {
     insertOrFindByHash(id, settingsHash, settingsJson) {
       return txInsertOrFind(id, settingsHash, settingsJson);
@@ -213,18 +243,27 @@ export function createDatabase(dbPath: string): BuildDatabase {
       return row ? rowToJob(row) : null;
     },
 
-    completeBuild(id, archive, materialCount) {
-      const now = Date.now();
-      stmtComplete.run(archive, now, materialCount, archive.length, id);
+    completeBuild(id, materials) {
+      txCompleteBuild(id, materials);
     },
 
     failBuild(id, error) {
       stmtFail.run(error, Date.now(), id);
     },
 
-    getArchive(id) {
-      const row = stmtGetArchive.get(id);
-      return row?.archive ?? null;
+    getMaterial(id, fileName) {
+      const row = stmtGetMaterial.get(id, fileName);
+      return row?.data ?? null;
+    },
+
+    getAllMaterials(id) {
+      const rows = stmtGetAllMaterials.all(id);
+      if (rows.length === 0) return null;
+      const map = new Map<string, Uint8Array>();
+      for (const row of rows) {
+        map.set(row.file_name, row.data);
+      }
+      return map;
     },
 
     listBuilds(limit, offset) {

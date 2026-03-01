@@ -18,6 +18,8 @@ import { jsonResponse, errorResponse } from "./cors.ts";
 import { processSettings } from "./settings.ts";
 import { JobNotFoundError } from "./errors.ts";
 import { SettingsError, type RawSettings } from "../betterrtx/settings.ts";
+import { createArchiveFromMap } from "./archive.ts";
+import { MATERIAL_FILES } from "./types.ts";
 
 // ── Route Context ───────────────────────────────────────────────
 
@@ -195,11 +197,11 @@ export function handleGetBuildStatus(
   return jsonResponse(job, ctx.corsHeaders);
 }
 
-/** GET /build/:id/archive — Download completed build archive. */
-export function handleGetBuildArchive(
+/** GET /build/:id/archive — Download completed build archive (generated on-demand). */
+export async function handleGetBuildArchive(
   ctx: RouteContext,
   id: string,
-): Response {
+): Promise<Response> {
   const job = ctx.db.findById(id);
   if (!job) {
     return errorResponse(
@@ -220,29 +222,82 @@ export function handleGetBuildArchive(
   // Check LRU cache first
   const cached = ctx.archiveCache.get(id);
   if (cached) {
-    return createArchiveResponse(cached.archive, job.settingsHash, ctx.corsHeaders);
+    const archive = await createArchiveFromMap(cached.materials);
+    return createArchiveResponse(archive, job.settingsHash, ctx.corsHeaders);
   }
 
-  // Fall back to SQLite BLOB
-  const archive = ctx.db.getArchive(id);
-  if (!archive) {
+  // Fall back to SQLite
+  const materials = ctx.db.getAllMaterials(id);
+  if (!materials || materials.size === 0) {
     return errorResponse(
-      "Archive data not found (may have been evicted)",
+      "Material data not found (may have been evicted)",
       ctx.corsHeaders,
       410,
     );
   }
 
   // Populate LRU cache for next time
-  ctx.archiveCache.set(id, { archive });
+  ctx.archiveCache.set(id, { materials });
 
+  const archive = await createArchiveFromMap(materials);
   return createArchiveResponse(archive, job.settingsHash, ctx.corsHeaders);
+}
+
+/** GET /build/:id/file/:fileName — Download a single compiled material binary. */
+export async function handleGetBuildFile(
+  ctx: RouteContext,
+  id: string,
+  fileName: string,
+): Promise<Response> {
+  // Validate file name against known material files
+  if (!Object.values(MATERIAL_FILES).includes(fileName)) {
+    return errorResponse("Invalid file name", ctx.corsHeaders, 400);
+  }
+
+  const job = ctx.db.findById(id);
+  if (!job) {
+    return errorResponse(
+      new JobNotFoundError(id).message,
+      ctx.corsHeaders,
+      404,
+    );
+  }
+
+  if (job.status !== "completed") {
+    return errorResponse(
+      `Build is ${job.status}, files not available yet`,
+      ctx.corsHeaders,
+      409,
+    );
+  }
+
+  // Check LRU cache first
+  const cached = ctx.archiveCache.get(id);
+  if (cached) {
+    const data = cached.materials.get(fileName);
+    if (data) {
+      return createFileResponse(data, fileName, ctx.corsHeaders);
+    }
+  }
+
+  // Fall back to SQLite
+  const data = ctx.db.getMaterial(id, fileName);
+  if (!data) {
+    return errorResponse(
+      "Material file not found (may have been evicted)",
+      ctx.corsHeaders,
+      410,
+    );
+  }
+
+  return createFileResponse(data, fileName, ctx.corsHeaders);
 }
 
 // ── Fetch Handler (parameterized routes + WS upgrade + CORS) ────
 
 const BUILD_ID_RE = /^\/build\/([0-9a-f-]{36})$/;
 const BUILD_ARCHIVE_RE = /^\/build\/([0-9a-f-]{36})\/archive$/;
+const BUILD_FILE_RE = /^\/build\/([0-9a-f-]{36})\/file\/(.+)$/;
 
 /**
  * Create the fetch fallback handler for Bun.serve().
@@ -274,6 +329,12 @@ export function createFetchHandler(ctx: RouteContext) {
     const statusMatch = url.pathname.match(BUILD_ID_RE);
     if (statusMatch && req.method === "GET") {
       return handleGetBuildStatus(ctx, statusMatch[1]!);
+    }
+
+    // GET /build/:id/file/:fileName
+    const fileMatch = url.pathname.match(BUILD_FILE_RE);
+    if (fileMatch && req.method === "GET") {
+      return handleGetBuildFile(ctx, fileMatch[1]!, decodeURIComponent(fileMatch[2]!));
     }
 
     // GET /build/:id/archive
@@ -310,6 +371,22 @@ function createArchiveResponse(
       "Content-Disposition":
         'attachment; filename="betterrtx-materials.tar.gz"',
       "X-Settings-Hash": settingsHash,
+    },
+  });
+}
+
+function createFileResponse(
+  data: Uint8Array,
+  fileName: string,
+  corsHeaders: CorsHeaders,
+): Response {
+  return new Response(data, {
+    status: 200,
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "application/octet-stream",
+      "Content-Disposition": `attachment; filename="${fileName}"`,
+      "Content-Length": String(data.byteLength),
     },
   });
 }

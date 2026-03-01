@@ -54,7 +54,7 @@ export interface BuildResult {
 
 /** Cached archive bytes for LRU hot-read layer (keyed by build ID). */
 export interface CacheEntry {
-  readonly archive: Uint8Array;
+  readonly materials: ReadonlyMap<string, Uint8Array>;
 }
 
 // ── Build Queue Types ────────────────────────────────────────────
