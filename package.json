@@ -1,13 +1,14 @@
 {
   "name": "azure-spar",
-  "version": "1.0.0",
+  "version": "1.4.1",
   "description": "Lazurite in Typescript",
   "module": "src/mod.ts",
   "main": "src/mod.ts",
   "type": "module",
   "scripts": {
     "serve": "bun run ./src/serve.ts",
-    "inspect": "bunx @modelcontextprotocol/inspector -- --transport streamablehttp --url http://localhost:3000/mcp"
+    "inspect": "bunx @modelcontextprotocol/inspector -- --transport streamablehttp --url http://localhost:3000/mcp",
+    "deploy": "docker build --platform linux/amd64 --build-arg CORS_ORIGIN=https://bedrock.graphics -t azure-spar:v$npm_package_version . && bunx wrangler containers push azure-spar:v$npm_package_version"
   },
   "exports": {
     ".": "./src/mod.ts",
