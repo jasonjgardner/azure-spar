@@ -64,93 +64,74 @@ export function shaderPlatformFromName(name: string): ShaderPlatform {
   return Number(entry[0]) as ShaderPlatform;
 }
 
-type PlatformMapping = Map<ShaderPlatform, number | ShaderPlatform>;
+// ── Platform Index Mapping ─────────────────────────────────────
 
-function platformMapping(version: number): PlatformMapping {
-  if (version >= 25) {
-    return new Map<ShaderPlatform, number | ShaderPlatform>([
-      [ShaderPlatform.Direct3D_SM40, 0],
-      [ShaderPlatform.Direct3D_SM50, 1],
-      [ShaderPlatform.Direct3D_SM60, 2],
-      [ShaderPlatform.Direct3D_SM65, 3],
-      [ShaderPlatform.Direct3D_XB1, 4],
-      [ShaderPlatform.Direct3D_XBX, 5],
-      [ShaderPlatform.GLSL_120, 6],
-      [ShaderPlatform.GLSL_430, 7],
-      [ShaderPlatform.ESSL_310, 8],
-      [ShaderPlatform.Metal, 9],
-      [ShaderPlatform.Vulkan, 10],
-      [ShaderPlatform.Nvn, 11],
-      [ShaderPlatform.PSSL, 12],
-      [ShaderPlatform.Unknown, 13],
-      // Platform conversion
-      [ShaderPlatform.ESSL_300, ShaderPlatform.ESSL_310],
-    ]);
-  }
+/** Ordered platform list for v22-v24 (15 platforms including ESSL_300). */
+const PLATFORM_LIST_PRE25: readonly ShaderPlatform[] = [
+  ShaderPlatform.Direct3D_SM40, ShaderPlatform.Direct3D_SM50,
+  ShaderPlatform.Direct3D_SM60, ShaderPlatform.Direct3D_SM65,
+  ShaderPlatform.Direct3D_XB1, ShaderPlatform.Direct3D_XBX,
+  ShaderPlatform.GLSL_120, ShaderPlatform.GLSL_430,
+  ShaderPlatform.ESSL_300, ShaderPlatform.ESSL_310,
+  ShaderPlatform.Metal, ShaderPlatform.Vulkan,
+  ShaderPlatform.Nvn, ShaderPlatform.PSSL, ShaderPlatform.Unknown,
+];
 
-  return new Map<ShaderPlatform, number | ShaderPlatform>([
-    [ShaderPlatform.Direct3D_SM40, 0],
-    [ShaderPlatform.Direct3D_SM50, 1],
-    [ShaderPlatform.Direct3D_SM60, 2],
-    [ShaderPlatform.Direct3D_SM65, 3],
-    [ShaderPlatform.Direct3D_XB1, 4],
-    [ShaderPlatform.Direct3D_XBX, 5],
-    [ShaderPlatform.GLSL_120, 6],
-    [ShaderPlatform.GLSL_430, 7],
-    [ShaderPlatform.ESSL_300, 8],
-    [ShaderPlatform.ESSL_310, 9],
-    [ShaderPlatform.Metal, 10],
-    [ShaderPlatform.Vulkan, 11],
-    [ShaderPlatform.Nvn, 12],
-    [ShaderPlatform.PSSL, 13],
-    [ShaderPlatform.Unknown, 14],
-  ]);
+/** Ordered platform list for v25+ (14 platforms, ESSL_300 removed). */
+const PLATFORM_LIST_V25: readonly ShaderPlatform[] = [
+  ShaderPlatform.Direct3D_SM40, ShaderPlatform.Direct3D_SM50,
+  ShaderPlatform.Direct3D_SM60, ShaderPlatform.Direct3D_SM65,
+  ShaderPlatform.Direct3D_XB1, ShaderPlatform.Direct3D_XBX,
+  ShaderPlatform.GLSL_120, ShaderPlatform.GLSL_430,
+  ShaderPlatform.ESSL_310,
+  ShaderPlatform.Metal, ShaderPlatform.Vulkan,
+  ShaderPlatform.Nvn, ShaderPlatform.PSSL, ShaderPlatform.Unknown,
+];
+
+function platformListForVersion(version: number): readonly ShaderPlatform[] {
+  return version >= 25 ? PLATFORM_LIST_V25 : PLATFORM_LIST_PRE25;
 }
 
+/**
+ * Get the binary index for a platform in a given version.
+ * For v25+, ESSL_300 is automatically resolved to ESSL_310.
+ */
 export function getPlatformValue(platform: ShaderPlatform, version: number): number {
-  const mapping = platformMapping(version);
-  let value = mapping.get(platform);
-
-  if (typeof value !== "number" && value !== undefined) {
-    value = mapping.get(value);
-  }
-
-  if (typeof value !== "number") {
+  const resolved = (version >= 25 && platform === ShaderPlatform.ESSL_300)
+    ? ShaderPlatform.ESSL_310
+    : platform;
+  const idx = platformListForVersion(version).indexOf(resolved);
+  if (idx === -1) {
     throw new Error(
-      `Platform ${SHADER_PLATFORM_NAMES[platform]} is not supported in version ${version} or there are no conversions available!`
+      `Platform ${SHADER_PLATFORM_NAMES[platform]} is not supported in version ${version}`
     );
   }
-
-  return value;
+  return idx;
 }
 
+/**
+ * Get the platform name for a given version.
+ * For v25+, ESSL_300 is resolved to ESSL_310.
+ */
 export function getPlatformName(platform: ShaderPlatform, version: number): string {
-  const mapping = platformMapping(version);
-  const value = mapping.get(platform);
-
-  if (typeof value === "number") return SHADER_PLATFORM_NAMES[platform];
-  if (value !== undefined) return SHADER_PLATFORM_NAMES[value];
-
-  throw new Error(
-    `Platform ${SHADER_PLATFORM_NAMES[platform]} is not supported in version ${version} or there are no conversions available!`
-  );
+  const resolved = (version >= 25 && platform === ShaderPlatform.ESSL_300)
+    ? ShaderPlatform.ESSL_310
+    : platform;
+  return SHADER_PLATFORM_NAMES[resolved];
 }
 
+/** Get the ordered list of platforms for a given version. */
 export function getPlatformList(version: number): ShaderPlatform[] {
-  const result: ShaderPlatform[] = [];
-  for (const [platform, value] of platformMapping(version)) {
-    if (typeof value === "number") {
-      result.push(platform);
-    }
-  }
-  return result;
+  return [...platformListForVersion(version)];
 }
 
+/** Reverse lookup: index to platform for a given version. */
 export function platformFromIndex(index: number, version: number): ShaderPlatform {
-  for (const [platform, value] of platformMapping(version)) {
-    if (value === index) return platform;
+  const list = platformListForVersion(version);
+  if (index < 0 || index >= list.length) {
+    throw new Error(`Platform index ${index} out of range for version ${version}`);
   }
-  throw new Error(`No platform found for index ${index} in version ${version}`);
+  return list[index]!;
 }
 
 export function getPlatformFileExtension(platform: ShaderPlatform): string {

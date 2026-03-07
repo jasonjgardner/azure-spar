@@ -363,6 +363,10 @@ async function processArchiveContents(
 /**
  * Load vanilla .material.bin files from the vanilla/ subdirectory.
  * These are used as merge bases for compilation.
+ *
+ * Without vanilla materials, the compiler cannot produce functional
+ * .material.bin files — the output would lack buffers, uniforms,
+ * encryption, and pass metadata from the base game.
  */
 async function loadVanillaMaterials(
   shadersVolume: string,
@@ -380,6 +384,24 @@ async function loadVanillaMaterials(
     } catch (err) {
       console.warn(`[Server] Failed to load vanilla material ${name}: ${err}`);
     }
+  }
+
+  const loaded = Object.keys(materials).length;
+  const expected = TARGET_MATERIALS.length;
+
+  if (loaded === 0) {
+    throw new ShaderDataError(
+      `No vanilla .material.bin files found in "${vanillaDir}". ` +
+        `These are required for compilation. Expected files: ${TARGET_MATERIALS.map(n => `${n}.material.bin`).join(", ")}`,
+    );
+  }
+
+  if (loaded < expected) {
+    const missing = TARGET_MATERIALS.filter((n) => !(n in materials));
+    console.warn(
+      `[Server] Missing vanilla materials (${loaded}/${expected}): ${missing.join(", ")}. ` +
+        `Builds for missing materials will fail.`,
+    );
   }
 
   return materials;

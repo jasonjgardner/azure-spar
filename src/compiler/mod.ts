@@ -1,25 +1,15 @@
 /**
  * Shader compilation orchestrator.
  *
- * Pipeline: embedded HLSL → DXC compile → BgfxShader wrap → Material build → .material.bin
+ * Pipeline: embedded HLSL → DXC compile → BgfxShader wrap → Material merge → .material.bin
  *
- * When a base material is provided (the vanilla .material.bin), compiled
- * shaders are merged into the existing pass structure — preserving version,
+ * Compiled shaders are merged into a vanilla base material — preserving version,
  * encryption, buffers, uniforms, parent info, and per-pass metadata.
- * This is the correct path for BetterRTX materials.
- *
- * Without a base material the compiler falls back to building a minimal
- * material from scratch (useful for tests but not loadable in-game).
+ * A base material is REQUIRED for producing functional output.
  */
 
 import { createDxcCompiler, type DxcCompileOptions } from "../dxc/mod.ts";
 import { loadManifestSources, type MaterialManifest, type ShaderEntry } from "../betterrtx/mod.ts";
-import { wrapDxilAsBgfxShader } from "./bgfx-wrapper.ts";
-import {
-  buildMaterial,
-  type CompiledShader,
-  type MaterialDefinition,
-} from "./material-builder.ts";
 import { readMaterial, writeMaterial, type Material } from "../material/material.ts";
 import { ShaderPlatform } from "../material/enums.ts";
 import type { Pass } from "../material/pass.ts";
@@ -173,41 +163,20 @@ export async function compileMaterial(
     compiledByPass.set(passName, { stage: shaderEntry.stage, dxilBytes: result.objectBytes });
   }
 
-  // Merge into base material when provided — otherwise build from scratch
-  if (options?.baseMaterial) {
-    const base = await readMaterial(options.baseMaterial);
-    const material = mergeCompiledShaders(base, compiledByPass, platform);
-    const binary = await writeMaterial(material);
-    return { material, binary };
+  // Base material is required for producing functional .material.bin files.
+  // Without it, the output lacks buffers, uniforms, encryption, and pass metadata
+  // from the vanilla material — making it non-functional in-game.
+  if (!options?.baseMaterial) {
+    throw new Error(
+      `No base material provided for "${manifest.materialName}". ` +
+        `A vanilla .material.bin is required for merge-based compilation. ` +
+        `Ensure vanilla materials are available in the materials-backup/ or shaders/vanilla/ directory.`,
+    );
   }
 
-  // Fallback: build a minimal material from scratch (not loadable in-game)
-  const compiledShaders: CompiledShader[] = [];
-  for (const shaderEntry of manifest.shaders) {
-    const passName = extractPassName(manifest.materialName, shaderEntry);
-    const compiled = compiledByPass.get(passName);
-    if (!compiled) continue;
-    compiledShaders.push({
-      stage: shaderEntry.stage,
-      platform,
-      bgfxShader: wrapDxilAsBgfxShader({ dxilBytes: compiled.dxilBytes }),
-      inputs: [],
-    });
-  }
-
-  const materialDef: MaterialDefinition = {
-    name: manifest.materialName,
-    passes: [
-      {
-        name: manifest.passName,
-        shaders: compiledShaders,
-      },
-    ],
-  };
-
-  const material = buildMaterial(materialDef);
+  const base = await readMaterial(options.baseMaterial);
+  const material = mergeCompiledShaders(base, compiledByPass, platform);
   const binary = await writeMaterial(material);
-
   return { material, binary };
 }
 
