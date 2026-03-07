@@ -22,6 +22,9 @@ brtxbuilder.exe
 .idea/
 *.swp
 *.swo
+.claude/
+llms*.txt
+CLAUDE.md
 
 # Documentation
 docs/
@@ -40,3 +43,4 @@ settings.example.json
 shaders/
 *.tar.gz
 materials-backup/
+output/

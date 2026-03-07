@@ -10,7 +10,7 @@ export interface ServerConfig {
   readonly port: number;
   /** CORS allowed origin. Default: "*". */
   readonly corsOrigin: string;
-  /** Path to dxcompiler.dll (auto-detected if omitted). */
+  /** Path to DXC shared library (auto-detected if omitted). */
   readonly dxcPath?: string;
   /** Build timeout in milliseconds. Default: 120_000 (2 minutes). */
   readonly buildTimeoutMs: number;

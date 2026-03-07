@@ -7,7 +7,7 @@
  * Environment variables:
  *   CORS_ORIGIN    — Allowed origin for CORS (default: "http://localhost:3000")
  *   SHADERS_PATH   — Root path for shader archives and vanilla materials
- *   DXCOMPILER_PATH — Path to dxcompiler.dll (auto-detected if omitted)
+ *   DXCOMPILER_PATH — Path to DXC shared library (auto-detected if omitted)
  *   DB_PATH        — Path to SQLite database (default: "./builds.sqlite")
  */
 
@@ -22,7 +22,7 @@ function parseArg(prefix: string): string | undefined {
 const port = parseInt(parseArg("--port=") ?? "3000", 10);
 const dbPath = parseArg("--db=") ?? process.env["DB_PATH"] ?? "./builds.sqlite";
 const corsOrigin = process.env["CORS_ORIGIN"] ?? "*";
-const shadersVolume = process.env["SHADERS_PATH"] ?? "./";
+const shadersVolume = process.env["SHADERS_PATH"] ?? "./shaders";
 const dxcPath = process.env["DXCOMPILER_PATH"];
 
 const server = createServer(

@@ -55,7 +55,7 @@ function resolveSourcesFromMap(
 export interface CompileMaterialOptions {
   /** Direct3D shader model platform to target. Defaults to SM65. */
   readonly platform?: ShaderPlatform;
-  /** Path to dxcompiler.dll (auto-detected if omitted). */
+  /** Path to DXC shared library (auto-detected if omitted). */
   readonly dxcPath?: string;
   /** Additional DXC compiler arguments passed to every shader. */
   readonly additionalArgs?: readonly string[];

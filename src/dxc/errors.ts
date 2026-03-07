@@ -7,7 +7,7 @@ export class DxcError extends Error {
 
 export class DxcLoadError extends DxcError {
   constructor(dllPath: string, reason: string) {
-    super(`Failed to load dxcompiler.dll from "${dllPath}": ${reason}`);
+    super(`Failed to load DXC shared library from "${dllPath}": ${reason}`);
     this.name = "DxcLoadError";
   }
 }

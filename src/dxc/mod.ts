@@ -4,12 +4,13 @@
  * Compiles HLSL source code to DXIL bytecode in-memory.
  *
  * Platform support:
- * - Windows x64: Uses COM vtable walking via bun:ffi (synchronous, fast)
- * - Linux/macOS: Falls back to CLI subprocess via `dxc` binary (async)
+ * - Windows x64: Uses COM vtable walking via bun:ffi with dxcompiler.dll
+ * - Linux x64:   Uses COM vtable walking via bun:ffi with libdxcompiler.so
+ * - Fallback:    CLI subprocess via `dxc` binary (async, temp files)
  *
  * Use the unified async API (`createDxcCompiler`, `compileHLSLAsync`) for
- * cross-platform code. The sync API (`DxcCompiler`, `compileHLSL`) is
- * Windows-only.
+ * cross-platform code. The sync API (`DxcCompiler`, `compileHLSL`) works
+ * on any platform where the shared library is available.
  */
 
 import { dlopen, ptr, toArrayBuffer, type Library, type Pointer } from "bun:ffi";
@@ -43,18 +44,21 @@ export { DxcCompilerCli } from "./cli.ts";
 // ── Platform detection ─────────────────────────────────────────────
 
 const IS_WINDOWS = process.platform === "win32";
+const IS_LINUX = process.platform === "linux";
 
-/** Returns true if the current platform supports the FFI-based compiler. */
-export function supportsFfiCompiler(): boolean {
-  return IS_WINDOWS;
-}
+const DXC_LIB_NAME = IS_WINDOWS ? "dxcompiler.dll" : "libdxcompiler.so";
 
-// ── DLL search ─────────────────────────────────────────────────────
+// ── Shared library search ─────────────────────────────────────────
 
-const DXC_SEARCH_PATHS = [
-  process.env["DXCOMPILER_PATH"],
-  "dxcompiler.dll",
-] as const;
+const DXC_SEARCH_PATHS: readonly (string | undefined)[] = IS_WINDOWS
+  ? [process.env["DXCOMPILER_PATH"], "dxcompiler.dll"]
+  : [
+      process.env["DXCOMPILER_PATH"],
+      "/opt/dxc/lib/libdxcompiler.so",
+      "/usr/local/lib/libdxcompiler.so",
+      "/usr/lib/libdxcompiler.so",
+      "libdxcompiler.so",
+    ];
 
 function resolveDxcPath(explicitPath?: string): string {
   if (explicitPath) return explicitPath;
@@ -68,8 +72,20 @@ function resolveDxcPath(explicitPath?: string): string {
     }
   }
 
-  // Fall through to bare name — dlopen will search system PATH
-  return "dxcompiler.dll";
+  // Fall through to bare name — dlopen will search system paths
+  return DXC_LIB_NAME;
+}
+
+/** Returns true if the current platform supports the FFI-based compiler. */
+export function supportsFfiCompiler(): boolean {
+  if (!IS_WINDOWS && !IS_LINUX) return false;
+
+  try {
+    const resolved = resolveDxcPath();
+    return Bun.file(resolved).size > 0;
+  } catch {
+    return false;
+  }
 }
 
 // ── DxcBuffer struct layout (24 bytes on x64) ─────────────────────
@@ -408,13 +424,13 @@ let _instance: DxcCompiler | null = null;
 
 /**
  * Get or create a singleton DxcCompiler instance.
- * @throws {DxcLoadError} On non-Windows platforms or if DLL not found.
+ * @throws {DxcLoadError} If the shared library is not found or platform unsupported.
  */
 export function getDxcCompiler(dllPath?: string): DxcCompiler {
-  if (!IS_WINDOWS) {
+  if (!IS_WINDOWS && !IS_LINUX) {
     throw new DxcLoadError(
-      "dxcompiler.dll",
-      "FFI-based DxcCompiler is only available on Windows. Use createDxcCompiler() for cross-platform support.",
+      DXC_LIB_NAME,
+      `FFI-based DxcCompiler is not supported on ${process.platform}. Use createDxcCompiler() for CLI fallback.`,
     );
   }
   if (_instance) return _instance;
@@ -432,7 +448,7 @@ export function disposeDxcCompiler(): void {
 
 /**
  * Compile HLSL source to DXIL bytecode. Throws on failure.
- * **Windows-only** — use `compileHLSLAsync` for cross-platform.
+ * Requires `dxcompiler.dll` (Windows) or `libdxcompiler.so` (Linux).
  *
  * Source stays entirely in-memory — never touches disk.
  */
@@ -478,15 +494,16 @@ let _unifiedInstance: UnifiedDxcCompiler | null = null;
 /**
  * Create a cross-platform DXC compiler instance.
  *
- * - Windows: Uses FFI-based COM interface (fast, in-memory)
- * - Linux/macOS: Uses CLI subprocess with temp files
+ * - Windows/Linux: Uses FFI-based COM interface (fast, in-memory) when
+ *   dxcompiler.dll / libdxcompiler.so is available
+ * - Fallback: Uses CLI subprocess with temp files
  *
- * @param dxcPath Path to dxcompiler.dll (Windows) or dxc binary (Linux)
+ * @param dxcPath Path to shared library or dxc binary
  */
 export async function createDxcCompiler(dxcPath?: string): Promise<UnifiedDxcCompiler> {
   if (_unifiedInstance) return _unifiedInstance;
 
-  if (IS_WINDOWS) {
+  if (supportsFfiCompiler()) {
     _unifiedInstance = new FfiCompilerWrapper(dxcPath);
   } else {
     _unifiedInstance = await getDxcCompilerCli(dxcPath);
@@ -501,11 +518,8 @@ export function disposeUnifiedCompiler(): void {
   _unifiedInstance = null;
 
   // Also dispose platform-specific singletons
-  if (IS_WINDOWS) {
-    disposeDxcCompiler();
-  } else {
-    disposeDxcCompilerCli();
-  }
+  disposeDxcCompiler();
+  disposeDxcCompilerCli();
 }
 
 /**
