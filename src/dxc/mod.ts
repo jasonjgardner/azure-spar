@@ -76,16 +76,31 @@ function resolveDxcPath(explicitPath?: string): string {
   return DXC_LIB_NAME;
 }
 
-/** Returns true if the current platform supports the FFI-based compiler. */
+/**
+ * Returns true if the current platform supports the FFI-based compiler.
+ *
+ * Currently Windows-only. Linux FFI crashes in Bun v1.3.x when passing COM
+ * object pointers to CFunction (segfault in IDxcCompiler3::Compile with
+ * non-null IDxcIncludeHandler). Set DXC_FFI=1 to force FFI on Linux for testing.
+ */
 export function supportsFfiCompiler(): boolean {
-  if (!IS_WINDOWS && !IS_LINUX) return false;
-
-  try {
-    const resolved = resolveDxcPath();
-    return Bun.file(resolved).size > 0;
-  } catch {
-    return false;
+  if (IS_WINDOWS) {
+    try {
+      return Bun.file(resolveDxcPath()).size > 0;
+    } catch {
+      return false;
+    }
   }
+
+  if (IS_LINUX && process.env["DXC_FFI"] === "1") {
+    try {
+      return Bun.file(resolveDxcPath()).size > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  return false;
 }
 
 // ── DxcBuffer struct layout (24 bytes on x64) ─────────────────────
@@ -427,10 +442,10 @@ let _instance: DxcCompiler | null = null;
  * @throws {DxcLoadError} If the shared library is not found or platform unsupported.
  */
 export function getDxcCompiler(dllPath?: string): DxcCompiler {
-  if (!IS_WINDOWS && !IS_LINUX) {
+  if (!supportsFfiCompiler()) {
     throw new DxcLoadError(
       DXC_LIB_NAME,
-      `FFI-based DxcCompiler is not supported on ${process.platform}. Use createDxcCompiler() for CLI fallback.`,
+      `FFI-based DxcCompiler is not available on ${process.platform}. Use createDxcCompiler() for CLI fallback.`,
     );
   }
   if (_instance) return _instance;

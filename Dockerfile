@@ -1,5 +1,7 @@
 # ── Stage 1: DXC Compiler ─────────────────────────────────────────
 FROM jasongardner/dxc:latest AS dxc
+# Pin to v1.8.2407 — v1.8.2502 has "Internal Compiler error" regressions
+RUN /opt/dxc/entrypoint.sh --v=1.8.2407
 RUN dxc --version
 
 # ── Stage 2: Bun Runtime ──────────────────────────────────────────
@@ -8,6 +10,7 @@ FROM oven/bun:latest AS base
 # Copy DXC binaries from the first stage
 COPY --from=dxc /opt/dxc /opt/dxc
 ENV PATH="/opt/dxc/bin:$PATH"
+ENV LD_LIBRARY_PATH="/opt/dxc/lib"
 
 # ── Install tigrisfs for R2 FUSE mount ────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \

@@ -1,6 +1,6 @@
 {
   "name": "azure-spar",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "Lazurite in Typescript",
   "module": "src/mod.ts",
   "main": "src/mod.ts",
