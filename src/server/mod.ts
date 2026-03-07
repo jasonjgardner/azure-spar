@@ -19,11 +19,13 @@ import {
   createPostBuild,
   createGetBuilds,
   createGetCacheStats,
+  createGetVersions,
   createFetchHandler,
   type RouteContext,
 } from "./routes.ts";
 import { disposeUnifiedCompiler } from "../dxc/mod.ts";
 import { resetShaderCache } from "./shader-cache.ts";
+import { resetVersionCache } from "./versions.ts";
 import {
   createMcpSessionManager,
   type McpSessionManager,
@@ -118,6 +120,7 @@ export function createServer(
       "/": { GET: createGetRoot(ctx) },
       "/build": { POST: createPostBuild(ctx) },
       "/builds": { GET: createGetBuilds(ctx) },
+      "/versions": { GET: createGetVersions(ctx) },
       "/cache/stats": { GET: createGetCacheStats(ctx) },
     },
     fetch(req, server) {
@@ -171,4 +174,5 @@ export async function disposeServer(): Promise<void> {
 
   disposeUnifiedCompiler();
   await resetShaderCache();
+  resetVersionCache();
 }

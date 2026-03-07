@@ -65,6 +65,7 @@ export function createQueueWorker(
       id: job.id,
       status: "building",
       settingsHash: job.settingsHash,
+      version: job.version,
     });
 
     try {
@@ -74,8 +75,9 @@ export function createQueueWorker(
 
       // Shader data loading has no internal timeout — guard against
       // FUSE mount hangs with a 60-second deadline on first load.
+      // Pass the job's version to load version-specific shader data.
       const shaderData = await Promise.race([
-        loadShaderData(config.shadersVolume, config.archivePrefix),
+        loadShaderData(config.shadersVolume, config.archivePrefix, job.version),
         new Promise<never>((_, reject) =>
           setTimeout(
             () => reject(new Error("Shader data loading timed out (60s)")),
@@ -110,6 +112,7 @@ export function createQueueWorker(
         id: job.id,
         status: "completed",
         settingsHash: job.settingsHash,
+        version: job.version,
         materialCount: result.materials.length,
         archiveSize: totalSize,
         elapsedMs: result.elapsedMs,
@@ -125,6 +128,7 @@ export function createQueueWorker(
         id: job.id,
         status: "failed",
         settingsHash: job.settingsHash,
+        version: job.version,
         error: message,
       });
     }

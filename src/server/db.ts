@@ -13,6 +13,7 @@ interface BuildRow {
   readonly id: string;
   readonly settings_hash: string;
   readonly settings_json: string;
+  readonly version: string;
   readonly status: string;
   readonly error: string | null;
   readonly created_at: number;
@@ -34,6 +35,7 @@ export interface BuildDatabase {
     id: string,
     settingsHash: string,
     settingsJson: string,
+    version: string,
   ) => InsertOrFindResult;
   readonly findById: (id: string) => BuildJob | null;
   readonly claimNextPending: () => BuildJob | null;
@@ -65,6 +67,7 @@ function rowToJob(row: BuildRow): BuildJob {
     id: row.id,
     settingsHash: row.settings_hash,
     settingsJson: row.settings_json,
+    version: row.version ?? "default",
     status: assertBuildStatus(row.status),
     error: row.error,
     createdAt: row.created_at,
@@ -92,6 +95,7 @@ export function createDatabase(dbPath: string): BuildDatabase {
       id TEXT PRIMARY KEY,
       settings_hash TEXT NOT NULL,
       settings_json TEXT NOT NULL,
+      version TEXT NOT NULL DEFAULT 'default',
       status TEXT NOT NULL DEFAULT 'pending',
       archive BLOB,
       error TEXT,
@@ -102,6 +106,13 @@ export function createDatabase(dbPath: string): BuildDatabase {
       archive_size INTEGER
     )
   `);
+
+  // Migration: add version column to existing databases
+  try {
+    db.exec("ALTER TABLE builds ADD COLUMN version TEXT NOT NULL DEFAULT 'default'");
+  } catch {
+    // Column already exists — expected for new or already-migrated databases
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS build_materials (
@@ -126,13 +137,13 @@ export function createDatabase(dbPath: string): BuildDatabase {
   // Reset any builds that were interrupted mid-flight (e.g., server crash)
   db.exec("UPDATE builds SET status = 'pending' WHERE status = 'building'");
 
-  const stmtInsert = db.prepare<void, [string, string, string, number]>(
-    `INSERT INTO builds (id, settings_hash, settings_json, created_at)
-     VALUES (?, ?, ?, ?)`,
+  const stmtInsert = db.prepare<void, [string, string, string, string, number]>(
+    `INSERT INTO builds (id, settings_hash, settings_json, version, created_at)
+     VALUES (?, ?, ?, ?, ?)`,
   );
 
   const stmtFindByHash = db.prepare<BuildRow, [string]>(
-    `SELECT id, settings_hash, settings_json, status, error,
+    `SELECT id, settings_hash, settings_json, version, status, error,
             created_at, started_at, completed_at, material_count, archive_size
      FROM builds
      WHERE settings_hash = ? AND status IN ('pending', 'building', 'completed')
@@ -141,7 +152,7 @@ export function createDatabase(dbPath: string): BuildDatabase {
   );
 
   const stmtFindById = db.prepare<BuildRow, [string]>(
-    `SELECT id, settings_hash, settings_json, status, error,
+    `SELECT id, settings_hash, settings_json, version, status, error,
             created_at, started_at, completed_at, material_count, archive_size
      FROM builds WHERE id = ?`,
   );
@@ -153,7 +164,7 @@ export function createDatabase(dbPath: string): BuildDatabase {
        SELECT id FROM builds WHERE status = 'pending'
        ORDER BY created_at ASC LIMIT 1
      )
-     RETURNING id, settings_hash, settings_json, status, error,
+     RETURNING id, settings_hash, settings_json, version, status, error,
                created_at, started_at, completed_at, material_count, archive_size`,
   );
 
@@ -182,7 +193,7 @@ export function createDatabase(dbPath: string): BuildDatabase {
   );
 
   const stmtList = db.prepare<BuildRow, [number, number]>(
-    `SELECT id, settings_hash, settings_json, status, error,
+    `SELECT id, settings_hash, settings_json, version, status, error,
             created_at, started_at, completed_at, material_count, archive_size
      FROM builds ORDER BY created_at DESC LIMIT ? OFFSET ?`,
   );
@@ -206,11 +217,11 @@ export function createDatabase(dbPath: string): BuildDatabase {
   // CRITICAL: Atomic check-and-insert prevents TOCTOU race on deduplication.
   // SQLite transactions are serialized (single-writer guarantee).
   const txInsertOrFind = db.transaction(
-    (id: string, hash: string, json: string): InsertOrFindResult => {
+    (id: string, hash: string, json: string, version: string): InsertOrFindResult => {
       const existing = stmtFindByHash.get(hash);
       if (existing) return { job: rowToJob(existing), inserted: false };
 
-      stmtInsert.run(id, hash, json, Date.now());
+      stmtInsert.run(id, hash, json, version, Date.now());
       const created = stmtFindById.get(id);
       if (!created) throw new Error("Failed to read back inserted build row");
       return { job: rowToJob(created), inserted: true };
@@ -229,8 +240,8 @@ export function createDatabase(dbPath: string): BuildDatabase {
   );
 
   return {
-    insertOrFindByHash(id, settingsHash, settingsJson) {
-      return txInsertOrFind(id, settingsHash, settingsJson);
+    insertOrFindByHash(id, settingsHash, settingsJson, version) {
+      return txInsertOrFind(id, settingsHash, settingsJson, version);
     },
 
     findById(id) {

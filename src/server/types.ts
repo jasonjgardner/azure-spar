@@ -67,6 +67,7 @@ export interface BuildJob {
   readonly id: string;
   readonly settingsHash: string;
   readonly settingsJson: string;
+  readonly version: string;
   readonly status: BuildStatus;
   readonly error: string | null;
   readonly createdAt: number;
@@ -75,6 +76,9 @@ export interface BuildJob {
   readonly materialCount: number | null;
   readonly archiveSize: number | null;
 }
+
+/** Default version ID for backward compatibility. */
+export const DEFAULT_VERSION_ID = "default";
 
 /** WebSocket connection data (attached to ws.data). */
 export interface WebSocketData {
@@ -87,6 +91,7 @@ export interface BuildStatusMessage {
   readonly id: string;
   readonly status: BuildStatus;
   readonly settingsHash: string;
+  readonly version: string;
   readonly error?: string;
   readonly materialCount?: number;
   readonly archiveSize?: number;

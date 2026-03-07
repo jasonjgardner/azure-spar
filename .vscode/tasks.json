@@ -5,7 +5,7 @@
 			"label": "build",
 			"detail": "Compile src/main.ts + embedded shaders into mod.exe",
 			"type": "shell",
-			"command": "bun build --compile ./src/main.ts ./shaders/**/*.hlsl ./shaders/**/*.hlsli ./shaders/**/*.h ./shaders/manifest.json ./shaders/register-bindings.json --outfile brtxbuilder.exe",
+			"command": "bun build --compile --bytecode ./src/main.ts ./shaders/**/*.hlsl ./shaders/**/*.hlsli ./shaders/**/*.h ./shaders/manifest.json ./shaders/register-bindings.json --outfile brtxbuilder.exe",
 			"group": {
 				"kind": "build",
 				"isDefault": true

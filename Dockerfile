@@ -41,8 +41,12 @@ RUN bun install --frozen-lockfile
 COPY src/ ./src/
 COPY tsconfig.json ./
 
+# ── Compile Server with Bytecode Caching ─────────────────────────
+# Pre-compiles JS to JSC bytecode for faster cold starts (~25% improvement).
+RUN bun build --compile --bytecode src/serve.ts --outfile /usr/local/bin/azure-spar-server
+
 # ── Startup Script ────────────────────────────────────────────────
-# Mounts the R2 bucket read-only via tigrisfs, then starts the server.
+# Mounts the R2 bucket read-only via tigrisfs, then starts the compiled server.
 RUN printf '#!/bin/sh\n\
     set -e\n\
     mkdir -p /mnt/r2\n\
@@ -51,7 +55,7 @@ RUN printf '#!/bin/sh\n\
     sleep 3\n\
     echo "R2 mount contents:"\n\
     ls -la /mnt/r2\n\
-    exec bun run src/serve.ts\n\
+    exec /usr/local/bin/azure-spar-server\n\
     ' > /startup.sh && chmod +x /startup.sh
 
 # ── Runtime ───────────────────────────────────────────────────────

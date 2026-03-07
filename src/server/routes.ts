@@ -19,7 +19,13 @@ import { processSettings } from "./settings.ts";
 import { JobNotFoundError } from "./errors.ts";
 import { SettingsError, type RawSettings } from "../betterrtx/settings.ts";
 import { createArchiveFromMap } from "./archive.ts";
-import { MATERIAL_FILES } from "./types.ts";
+import { DEFAULT_VERSION_ID, MATERIAL_FILES } from "./types.ts";
+import {
+  discoverVersions,
+  loadVersionFormConfig,
+  loadVersionDefaults,
+  isValidVersion,
+} from "./versions.ts";
 
 // ── Route Context ───────────────────────────────────────────────
 
@@ -94,9 +100,25 @@ export function createPostBuild(ctx: RouteContext) {
       return errorResponse("Request body too large", ctx.corsHeaders, 413);
     }
 
+    // Extract version from query parameter (defaults to "default")
+    const url = new URL(req.url);
+    const version = url.searchParams.get("version") ?? DEFAULT_VERSION_ID;
+
+    // Validate version if not the default
+    if (version !== DEFAULT_VERSION_ID) {
+      const valid = await isValidVersion(ctx.config.shadersVolume, version);
+      if (!valid) {
+        return errorResponse(
+          `Unknown version: "${version}"`,
+          ctx.corsHeaders,
+          400,
+        );
+      }
+    }
+
     let hash: string;
     try {
-      const result = processSettings(rawJson, ctx.defaults);
+      const result = processSettings(rawJson, ctx.defaults, version);
       hash = result.hash;
     } catch (err) {
       if (err instanceof SettingsError) {
@@ -117,7 +139,7 @@ export function createPostBuild(ctx: RouteContext) {
 
     // Atomic deduplicate-or-insert (prevents TOCTOU race)
     const id = crypto.randomUUID();
-    const { job, inserted } = ctx.db.insertOrFindByHash(id, hash, rawJson);
+    const { job, inserted } = ctx.db.insertOrFindByHash(id, hash, rawJson, version);
 
     if (!inserted) {
       return jsonResponse(
@@ -125,6 +147,7 @@ export function createPostBuild(ctx: RouteContext) {
           id: job.id,
           status: job.status,
           settingsHash: job.settingsHash,
+          version: job.version,
           deduplicated: true,
         },
         ctx.corsHeaders,
@@ -133,7 +156,7 @@ export function createPostBuild(ctx: RouteContext) {
     }
 
     return jsonResponse(
-      { id: job.id, status: "pending", settingsHash: hash },
+      { id: job.id, status: "pending", settingsHash: hash, version },
       ctx.corsHeaders,
       202,
     );
@@ -176,6 +199,68 @@ export function createGetCacheStats(ctx: RouteContext) {
       },
       ctx.corsHeaders,
     );
+}
+
+// ── Version Route Handlers ───────────────────────────────────────
+
+/** GET /versions — List available shader versions. */
+export function createGetVersions(ctx: RouteContext) {
+  return async (): Promise<Response> => {
+    const manifest = await discoverVersions(ctx.config.shadersVolume);
+    return jsonResponse(manifest, ctx.corsHeaders);
+  };
+}
+
+/** GET /versions/:id/form — Return form configuration for a version. */
+export async function handleGetVersionForm(
+  ctx: RouteContext,
+  versionId: string,
+): Promise<Response> {
+  const valid = await isValidVersion(ctx.config.shadersVolume, versionId);
+  if (!valid) {
+    return errorResponse(
+      `Unknown version: "${versionId}"`,
+      ctx.corsHeaders,
+      404,
+    );
+  }
+
+  const formConfig = await loadVersionFormConfig(
+    ctx.config.shadersVolume,
+    versionId,
+  );
+  if (!formConfig) {
+    return errorResponse(
+      `No form configuration available for version "${versionId}"`,
+      ctx.corsHeaders,
+      404,
+    );
+  }
+
+  return jsonResponse(formConfig, ctx.corsHeaders);
+}
+
+/** GET /versions/:id/defaults — Return default settings for a version. */
+export async function handleGetVersionDefaults(
+  ctx: RouteContext,
+  versionId: string,
+): Promise<Response> {
+  const valid = await isValidVersion(ctx.config.shadersVolume, versionId);
+  if (!valid) {
+    return errorResponse(
+      `Unknown version: "${versionId}"`,
+      ctx.corsHeaders,
+      404,
+    );
+  }
+
+  const defaults = await loadVersionDefaults(
+    ctx.config.shadersVolume,
+    versionId,
+  );
+
+  // Fall back to global defaults if no version-specific ones exist
+  return jsonResponse(defaults ?? ctx.defaults, ctx.corsHeaders);
 }
 
 // ── Parameterized Route Handlers (called from fetch handler) ────
@@ -298,6 +383,8 @@ export async function handleGetBuildFile(
 const BUILD_ID_RE = /^\/build\/([0-9a-f-]{36})$/;
 const BUILD_ARCHIVE_RE = /^\/build\/([0-9a-f-]{36})\/archive$/;
 const BUILD_FILE_RE = /^\/build\/([0-9a-f-]{36})\/file\/(.+)$/;
+const VERSION_FORM_RE = /^\/versions\/([^/]+)\/form$/;
+const VERSION_DEFAULTS_RE = /^\/versions\/([^/]+)\/defaults$/;
 
 /**
  * Create the fetch fallback handler for Bun.serve().
@@ -341,6 +428,18 @@ export function createFetchHandler(ctx: RouteContext) {
     const archiveMatch = url.pathname.match(BUILD_ARCHIVE_RE);
     if (archiveMatch && req.method === "GET") {
       return handleGetBuildArchive(ctx, archiveMatch[1]!);
+    }
+
+    // GET /versions/:id/form
+    const formMatch = url.pathname.match(VERSION_FORM_RE);
+    if (formMatch && req.method === "GET") {
+      return handleGetVersionForm(ctx, decodeURIComponent(formMatch[1]!));
+    }
+
+    // GET /versions/:id/defaults
+    const defaultsMatch = url.pathname.match(VERSION_DEFAULTS_RE);
+    if (defaultsMatch && req.method === "GET") {
+      return handleGetVersionDefaults(ctx, decodeURIComponent(defaultsMatch[1]!));
     }
 
     // MCP Streamable HTTP endpoint

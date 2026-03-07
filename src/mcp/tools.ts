@@ -355,6 +355,10 @@ function registerCompileMaterials(server: McpServer, ctx: McpContext): void {
         settings: settingsObjectSchema.describe(
           "User settings overrides to compile with.",
         ),
+        version: z
+          .string()
+          .optional()
+          .describe("Shader version ID. Defaults to 'default'."),
       }),
       annotations: {
         readOnlyHint: false,
@@ -362,7 +366,8 @@ function registerCompileMaterials(server: McpServer, ctx: McpContext): void {
         idempotentHint: true,
       },
     },
-    async ({ settings }) => {
+    async ({ settings, version: versionInput }) => {
+      const version = versionInput ?? "default";
       if (!ctx.db) {
         return {
           content: [
@@ -379,7 +384,7 @@ function registerCompileMaterials(server: McpServer, ctx: McpContext): void {
       let result: { readonly hash: string };
 
       try {
-        result = processSettings(rawJson, ctx.defaults);
+        result = processSettings(rawJson, ctx.defaults, version);
       } catch (err) {
         return {
           content: [
@@ -412,6 +417,7 @@ function registerCompileMaterials(server: McpServer, ctx: McpContext): void {
         id,
         result.hash,
         rawJson,
+        version,
       );
 
       return {
