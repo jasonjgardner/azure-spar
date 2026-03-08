@@ -17,6 +17,34 @@ import { parseSettingsJson, settingsToDefines } from "../betterrtx/settings.ts";
 import { mergeSettings } from "./settings.ts";
 import { loadShaderData } from "./shader-cache.ts";
 import { buildAllMaterials } from "./build-pipeline.ts";
+import { BuildTimeoutError } from "./errors.ts";
+
+/**
+ * Strip internal paths and DXC diagnostic noise from error messages
+ * before sending to clients. Full details stay in server logs.
+ */
+function sanitizeBuildError(message: string): string {
+  if (message.includes("timed out")) return "Build timed out. Please try again.";
+  if (message.includes("Shader data loading")) return "Failed to load shader data. Please try again later.";
+
+  // Extract the shader name from "Compilation failed for <name>: <details>"
+  const compileMatch = message.match(/^Compilation failed for ([^:]+):/);
+  if (compileMatch) {
+    return `Shader compilation failed: ${compileMatch[1]}`;
+  }
+
+  // Strip file system paths (Linux and Windows)
+  const stripped = message
+    .replace(/\/tmp\/[^\s:]+/g, "<temp>")
+    .replace(/[A-Z]:\\[^\s:]+/g, "<path>");
+
+  // Truncate overly long messages
+  if (stripped.length > 200) {
+    return `${stripped.slice(0, 197)}...`;
+  }
+
+  return stripped;
+}
 
 /** Queue worker control interface. */
 export interface QueueWorker {
@@ -118,10 +146,11 @@ export function createQueueWorker(
         elapsedMs: result.elapsedMs,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      db.failBuild(job.id, message);
+      const fullMessage = err instanceof Error ? err.message : String(err);
+      const clientMessage = sanitizeBuildError(fullMessage);
 
-      console.error(`[Queue] Failed ${job.id}: ${message}`);
+      db.failBuild(job.id, fullMessage);
+      console.error(`[Queue] Failed ${job.id}: ${fullMessage}`);
 
       publish(job.id, {
         type: "status",
@@ -129,7 +158,7 @@ export function createQueueWorker(
         status: "failed",
         settingsHash: job.settingsHash,
         version: job.version,
-        error: message,
+        error: clientMessage,
       });
     }
 

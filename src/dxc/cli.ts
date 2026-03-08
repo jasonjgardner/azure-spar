@@ -146,7 +146,13 @@ export class DxcCompilerCli {
 
     await ensureTempDir();
 
-    const inputPath = tempFilePath(".hlsl");
+    // Write source into the first include path directory (if provided) so that
+    // relative #include directives resolve correctly from the source file location.
+    // e.g. #include "../../RTXStub/shaders/Settings.hlsl" in RTXPostFX.Bloom
+    const sourceDir = options.includePaths?.[0];
+    const inputPath = sourceDir
+      ? join(sourceDir, `dxc_${crypto.randomUUID().slice(0, 8)}.hlsl`)
+      : tempFilePath(".hlsl");
     const outputPath = tempFilePath(".dxil");
 
     try {
